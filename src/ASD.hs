@@ -4,10 +4,15 @@
 module ASD where
 
 import Prelude
+import Data.Coerce
+import Control.Monad.Reader
+
+import Data.Functor.Foldable
+import Data.Functor.Foldable.TH
 
 import Data.Dynamic
-import Control.Monad.Free
-import Control.Monad.Free.TH
+
+import qualified Language.Java.Syntax as J
 
 {-
 Interface:
@@ -39,50 +44,72 @@ Timers:
 
 -}
 
+type Identifier = String
 
-data ASTF f where
-  -- State :: [Dynamic] -> f -> ASTF f
-  Upon  :: Eq a => String -> a -> ASTF ()
+newtype Program = P [TopDecl]
+  deriving Show
 
-makeFree ''ASTF
+data TopDecl
+ = StateD [Identifier]
+ | UponD Identifier [Identifier] [Statement]
+  deriving Show
+ -- | InterfaceD [RequestD] [IndicationD]
+ -- | ProcedureD Expr
+ -- | MessagesD  --
+ -- | TimersD    --
 
-type AST = Free ASTF
+data Statement
+  = Assign Identifier Expr
+  | If Expr [Statement] [Statement]
+  | Trigger Identifier [Expr]
+  | TriggerSend Identifier Expr [Expr] -- ^ Trigger Send(MessageType, host, args...) (TriggerSend MessageType host [arg])
+  | Foreach Identifier Expr [Statement]
+  deriving Show
 
-interface = undefined
-requests = undefined
-indications = undefined
-state = undefined
+data Expr
+  = I Int
+  | B Bool
+  | Set [Either (Expr, Expr) Expr] -- maps vs sets; {(m,p)} vs {m}
+  | Id Identifier
+  | In Expr Expr
+  | NotIn Expr Expr
+  | Union Expr Expr
+  | Difference Expr Expr
+  | Eq Expr Expr
+  | NotEq Expr Expr
+  deriving Show
 
-(<--) = undefined
-(u) = undefined
-(∉) = undefined
-(+++) = undefined
 
-upon = undefined
-trigger = undefined
 
-data State =
-  Delivered
+testProg :: Program
+testProg = P
+  [ StateD ["myself", "neighbours", "received", "channelReady"]
+  , UponD "Init" ["self"] [ Assign "myself" (Id "self")
+                          , Assign "neighbours" (Set [])
+                          , Assign "received" (Set [])
+                          , Assign "channelReady" (B False)
+                          ]
+  , UponD "ChannelCreated" [] [ Assign "channelReady" (B True) ]
+  , UponD "broadcastRequest" ["mid", "s", "m"] [ If (Id "channelReady") [Trigger "floodMessage" [Id "mid", Id "s", Id "m", Id "myself"]] [] ]
+  , UponD "floodMessage" ["mid", "s", "m", "from"] [ If (Id "mid" `NotIn` Id "received") [ Assign "received" (Id "received" `Union` Set [Right $ Id "mid"])
+                                                                                         -- , Trigger "Notify" (undefined)
+                                                                                         , Foreach "host" (Id "neighbours") [If (Id "host" `NotEq` Id "from") [TriggerSend "FloodMessage" (Id "host") [Id "mid", Id "s"]] []]
+                                                                                         ] [] ]
+  , UponD "neighbourUp" ["upNeighbours"] [Foreach "h" (Id "upNeighbours") [Assign "neighbours" (Id "neighbours" `Union` Set [Right $ Id "h"])]]
+  , UponD "neighbourDown" ["downNeighbours"] [Foreach "h" (Id "downNeighbours") [Assign "neighbours" (Id "neighbours" `Difference` Set [Right $ Id "h"])]]
+  ]
 
--- example1 : AST ()
-example1 = do
 
-  -- interface --
-  --   requests --
-  --     []
-  --   indications --
-  --     []
 
-  upon "init" do
-    Delivered <-- []
 
-  upon "pp2pSend" \[p, m] -> do
-    trigger "sp2pSend" [p, m]
+-- type ASDM = Reader ()
 
-  upon "sp2pDeliver" \[s, m] -> do
-    if m ∉ Delivered then do
-       Delivered <-- Delivered +++ m
-       trigger "pp2pDeliver" [s, m]
+-- type Java = [CompilationUnit]
 
-    else pure ()
 
+-- translate :: Program -> Java
+-- translate = map translateTopDecl . coerce
+
+-- translateTopDecl :: TopDecl -> ASDM Java
+-- translateTopDecl = cata $ \case
+  
