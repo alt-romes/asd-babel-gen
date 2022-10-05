@@ -58,7 +58,7 @@ library
     import:           warnings
 
     -- Modules exported by the library.
-    exposed-modules:  ASD
+    exposed-modules:  ASD, Syntax, Codegen, Typechecker
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -71,7 +71,7 @@ library
                       recursion-schemes,
                       containers,
                       megaparsec,
-                      text, mtl,
+                      text, mtl >= 2.3, transformers,
                       language-java
 
 
