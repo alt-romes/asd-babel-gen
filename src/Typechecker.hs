@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE LambdaCase #-}
@@ -53,80 +54,87 @@ inferTop = \case
 inferStmt :: Statement Parsed -> Infer (Statement Typed)
 inferStmt = cata \case
   AssignF i e -> do
-    t <- inferExp e
+    (t, e') <- inferExp e
     it <- findInEnv i
     constraint it t
-    pure (Assign i e)
+    pure (Assign i e')
 
   IfF e thenS elseS -> do
-    t <- inferExp e
+    (t, e') <- inferExp e
     constraint t TBool
     thenS' <- sequence thenS
     elseS' <- sequence elseS
-    pure (If e thenS' elseS')
+    pure (If e' thenS' elseS')
  
   TriggerF i args -> do
-    args' <- mapM inferExp args
+    (argTys, args') <- unzip <$> mapM inferExp args
     funT  <- findInEnv i
-    constraint funT (TVoidFun args')
-    pure (Trigger i args)
+    constraint funT (TVoidFun argTys)
+    pure (Trigger i args')
 
-  TriggerSendF msgType host args -> _
+  TriggerSendF msgType host args -> error "TriggerSend infer"
 
   ForeachF _ name e body -> do
     nt <- TVar <$> fresh
-    t <- inferExp e
+    (t, e') <- inferExp e
     constraint t (TSet nt)
     bodyT <- pushScope [(name, nt)] $ sequence body
-    pure (Foreach nt name e bodyT)
+    pure (Foreach nt name e' bodyT)
 
 
-inferExp :: Expr -> Infer AType
+inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
 inferExp = cata \case
-  IF _ -> pure TInt
-  BF _ -> pure TBool
-  IdF i -> findInEnv i
+  IF x -> pure (TInt, I x)
+  BF x -> pure (TBool, B x)
+  IdF i -> (, Id i) <$> findInEnv i
   InF e1 e2 -> do
-    e1' <- e1
-    e2' <- e2
-    constraint e2' (TSet e1')
-    pure TBool
+    (t1, e1') <- e1
+    (t2, e2') <- e2
+    constraint t2 (TSet t1)
+    pure (TBool, In e1' e2')
     -- TODO: Map
   NotInF e1 e2 -> do
-    e1' <- e1
-    e2' <- e2
-    constraint e2' (TSet e1')
-    pure TBool
+    (t1, e1') <- e1
+    (t2, e2') <- e2
+    constraint t2 (TSet t1)
+    pure (TBool, NotIn e1' e2')
     -- TODO: Map
   EqF e1 e2 -> do
-    e1' <- e1
-    e2' <- e2
-    constraint e1' e2'
-    pure TBool
+    (t1, e1') <- e1
+    (t2, e2') <- e2
+    constraint t1 t2
+    pure (TBool, Eq e1' e2')
   NotEqF e1 e2 -> do
-    e1' <- e1
-    e2' <- e2
-    constraint e1' e2'
-    pure TBool
-  SetF s -> do
+    (t1, e1') <- e1
+    (t2, e2') <- e2
+    constraint t1 t2
+    pure (TBool, NotEq e1' e2')
+  SetF _ s -> do
     s' <- sequence s
     case s' of
-      []  -> pure $ TSet TUnknown
-      x:_ -> pure $ TSet x
-  MapF m -> _
-  UnionF e1 e2 -> do
+      [] -> do
+        newTV <- TVar <$> fresh
+        pure (TSet newTV, Set newTV [])
+      (t, x):xs -> do
+        xs' <- forM xs \(t', x') -> do
+                constraint t' t
+                pure x'
+        pure (TSet t, Set t (x:xs'))
+  MapF _ m -> error "infer map"
+  UnionF _ e1 e2 -> do
     -- TODO: Only works for sets yet, but should also work for maps.
-    e1' <- e1
-    e2' <- e2
-    constraint e1' e2'
-    pure e1'
-  DifferenceF e1 e2 -> do
+    (t1, e1') <- e1
+    (t2, e2') <- e2
+    constraint t1 t2
+    -- TODO: Constraint to set or map
+    pure (t1, Union t1 e1' e2')
+  DifferenceF _ e1 e2 -> do
     -- TODO: Only works for sets yet, but should also work for maps.
-    e1' <- e1
-    e2' <- e2
-    constraint e1' e2'
-    pure e1'
-
+    (t1, e1') <- e1
+    (t2, e2') <- e2
+    constraint t1 t2
+    -- TODO: Constraint to set or map
+    pure (t1, Difference t1 e1' e2')
 
 runInfer :: Infer a -> (a, [Constraint])
 runInfer m = evalRWS m mempty (Uniq 0)
@@ -185,6 +193,7 @@ instance Substitutable AType where
   applySubst s = cata \case
     TIntF -> TInt
     TBoolF -> TBool
+    TStringF -> TString
     TSetF t -> TSet t
     TMapF t -> TMap t
     TUnknownF -> TUnknown
@@ -194,6 +203,7 @@ instance Substitutable AType where
   ftv = cata \case
     TIntF -> mempty
     TBoolF -> mempty
+    TStringF -> mempty
     TSetF t -> t
     TMapF t -> t
     TUnknownF -> mempty

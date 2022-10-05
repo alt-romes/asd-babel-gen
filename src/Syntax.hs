@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -43,7 +44,6 @@ type Identifier = String
 data Algorithm p = P (StateD p) [TopDecl p]
 
 data StateD p = StateD (XStateD p) [Identifier]
-deriving instance Show (XStateD p) => Show (StateD p)
 
 data TopDecl p
  = UponD (XUponD p) Identifier [Identifier] [Statement p]
@@ -51,48 +51,49 @@ data TopDecl p
  -- | ProcedureD Expr
  -- | MessagesD  --
  -- | TimersD    --
-deriving instance (Show (XUponD p), Show (XForeach p)) => Show (TopDecl p)
 
 data Statement p
-  = Assign Identifier Expr
-  | If Expr [Statement p] [Statement p]
-  | Trigger Identifier [Expr]
-  | TriggerSend Identifier Expr [Expr] -- ^ Trigger Send(MessageType, host, args...) (TriggerSend MessageType host [arg])
-  | Foreach (XForeach p) Identifier Expr [Statement p]
-deriving instance Show (XForeach p) => Show (Statement p)
+  = Assign Identifier (Expr p)
+  | If (Expr p) [Statement p] [Statement p]
+  | Trigger Identifier [Expr p]
+  | TriggerSend Identifier (Expr p) [Expr p] -- ^ Trigger Send(MessageType, host, args...) (TriggerSend MessageType host [arg])
+  | Foreach (XForeach p) Identifier (Expr p) [Statement p]
 
-data Expr
+data Expr p
   = I Integer
   | B Bool
-  | Set [Expr] -- sets; {m}
-  | Map [(Expr, Expr)] -- maps; {(m,p)}
+  | Set (XSet p) [Expr p] -- sets; {m}
+  | Map (XMap p) [(Expr p, Expr p)] -- maps; {(m,p)}
   | Id Identifier
-  | In Expr Expr
-  | NotIn Expr Expr
-  | Union Expr Expr
-  | Difference Expr Expr
-  | Eq Expr Expr
-  | NotEq Expr Expr
-  deriving Show
+  | In (Expr p) (Expr p)
+  | NotIn (Expr p) (Expr p)
+  | Union (XUnion p) (Expr p) (Expr p)
+  | Difference (XDifference p) (Expr p) (Expr p)
+  | Eq (Expr p) (Expr p)
+  | NotEq (Expr p) (Expr p)
 
 data AType
   = TInt
   | TBool
+  | TString
   | TSet AType
   | TMap AType
   | TUnknown
   | TVoidFun [AType]
   | TVar Int
-  deriving Eq
+  deriving (Show, Eq)
 
 data Parsed
 data Typed
-
 
 -- Trees that Grow
 type family XStateD  p
 type family XUponD   p
 type family XForeach p
+type family XSet p
+type family XMap p
+type family XUnion p
+type family XDifference p
 
 type instance XStateD  Parsed = ()
 type instance XStateD  Typed  = [AType]
@@ -100,10 +101,27 @@ type instance XUponD   Parsed = ()
 type instance XUponD   Typed  = [AType]
 type instance XForeach Parsed = ()
 type instance XForeach Typed  = AType
+type instance XSet Parsed = ()
+type instance XSet Typed = AType
+type instance XMap Parsed = ()
+type instance XMap Typed = AType
+type instance XUnion Parsed = ()
+type instance XUnion Typed = AType
+type instance XDifference Parsed = ()
+type instance XDifference Typed = AType
 
+deriving instance Show (Expr Parsed)
+deriving instance Show (Expr Typed)
+deriving instance Show (Statement Parsed)
+deriving instance Show (Statement Typed)
+deriving instance Show (StateD Parsed)
+deriving instance Show (StateD Typed)
+deriving instance Show (TopDecl Parsed)
+deriving instance Show (TopDecl Typed)
+deriving instance Show (Algorithm Parsed)
+deriving instance Show (Algorithm Typed)
 
 makeBaseFunctor ''Statement
 makeBaseFunctor ''Expr
 makeBaseFunctor ''AType
-
 

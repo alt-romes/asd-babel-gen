@@ -17,16 +17,18 @@ import Syntax
 type Env = M.Map Identifier ()
 type Babel = RWS Env () ()
 
-translate :: Algorithm Typed -> Babel J.CompilationUnit
-translate p@(P (StateD varTypes vars) tops) =
+translateAlg :: Algorithm Typed -> Babel J.CompilationUnit
+translateAlg (P (StateD varTypes vars) tops) = do
+  varTypes' <- mapM translateType varTypes
   let
-      fieldDecls = map (\(v, t) -> MemberDecl $ FieldDecl [Private] t [VarDecl (VarId (Ident v)) Nothing]) (zip vars varTypes)
+      fieldDecls = map (\(v, t) -> MemberDecl $ FieldDecl [Private] t [VarDecl (VarId (Ident v)) Nothing]) (zip vars varTypes')
    in
       local (\r -> foldr (\v -> M.insert v ()) r vars) do -- add vars to env
         methodDecls <- forM tops $ \case
           UponD argTypes name args stmts -> do
             bodyStmts <- mapM translateStmt stmts
-            pure $ MemberDecl $ MethodDecl [Public] [] Nothing (Ident name) (map (\(a, t) -> FormalParam [] t False (VarId (Ident a))) (zip args argsTypes)) [] Nothing (MethodBody $ Just $ Block bodyStmts)
+            argTypes' <- mapM translateType argTypes
+            pure $ MemberDecl $ MethodDecl [Public] [] Nothing (Ident name) (map (\(a, t) -> FormalParam [] t False (VarId (Ident a))) (zip args argTypes')) [] Nothing (MethodBody $ Just $ Block bodyStmts)
         let classBody   = ClassBody $ fieldDecls <> methodDecls
         pure $ CompilationUnit Nothing [] [ClassTypeDecl $ ClassDecl [Public] (Ident "ClassName") [] Nothing [] classBody]
 
@@ -50,15 +52,16 @@ translateStmt = fmap BlockStmt . cata \case
     -- TODO: If the trigger is outside of scope this should be a triggerNotify instead
     args' <- mapM translateExp args
     pure (ExpStmt $ MethodInv $ MethodCall (Name [Ident i]) args')
-  TriggerSendF msgType host args -> _
+  TriggerSendF msgType host args -> error "TriggerSend translate"
 
-  ForeachF _ name e body -> do
+  ForeachF t name e body -> do
     e' <- translateExp e
     body' <- sequence body
-    pure $ EnhancedFor [] _type (Ident name) e' (StmtBlock . Block . map BlockStmt $ body')
+    t' <- translateType t
+    pure $ EnhancedFor [] t' (Ident name) e' (StmtBlock . Block . map BlockStmt $ body')
 
 
-translateExp :: Expr -> Babel Exp
+translateExp :: Expr Typed -> Babel Exp
 translateExp = cata \case
   IF i -> pure $ Lit $ Int i
   BF b -> pure $ Lit $ Boolean b
@@ -79,16 +82,34 @@ translateExp = cata \case
     e1' <- e1
     e2' <- e2
     pure $ BinOp e1' J.NotEq e2'
-  SetF s -> _
-  MapF m -> _
-  UnionF e1 e2 -> do
+  SetF t s -> do
+    translateType t >>= \case
+      PrimType _ -> error "PrimType (Non-RefType) Set"
+      RefType t' -> pure $ InstanceCreation [ActualType t'] (TypeDeclSpecifierUnqualifiedWithDiamond (Ident "HashSet") Diamond) [] Nothing
+  MapF _ m -> error "Map translate"
+  UnionF t e1 e2 -> do
     -- TODO: Only works for sets yet, but should also work for maps.
     e1' <- e1
     e2' <- e2
     pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "addAll") [e2']
-  DifferenceF e1 e2 -> do
+  DifferenceF t e1 e2 -> do
     -- TODO: Only works for sets yet, but should also work for maps.
     e1' <- e1
     e2' <- e2
     pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "removeAll") [e2']
 
+translateType :: AType -> Babel Type
+translateType = cata \case
+  TIntF -> pure $ PrimType IntT
+  TBoolF -> pure $ PrimType BooleanT
+  TStringF -> pure $ RefType $ ClassRefType $ ClassType [(Ident "String", [])]
+  TSetF x -> x >>= \case
+    PrimType x' -> error $ show x' <> " is not a boxed/Object type"
+    RefType t  -> pure $ RefType $ ClassRefType $ ClassType [(Ident "Set", [ActualType t])]
+  TMapF x -> x >>= \case
+    PrimType x' -> error $ show x' <> " is not a boxed/Object type"
+    RefType t  -> pure $ RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t])]
+  TUnknownF -> error "Unknown type"
+  TVoidFunF _ -> error "Fun type"
+  TVarF i -> error $ "Type variable " <> show i
+  
