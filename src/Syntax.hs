@@ -41,13 +41,14 @@ Timers:
 
 type Identifier = String
 
-data Algorithm p = P (StateD p) [TopDecl p]
+data Algorithm p = P InterfaceD (StateD p) [TopDecl p]
 
+data InterfaceD = InterfaceD [Identifier] [Identifier] -- [Request] [Indication], only the method name matters
+  deriving Show
 data StateD p = StateD (XStateD p) [Identifier]
 
 data TopDecl p
  = UponD (XUponD p) Identifier [Identifier] [Statement p]
- -- | InterfaceD [RequestD] [IndicationD]
  -- | ProcedureD Expr
  -- | MessagesD  --
  -- | TimersD    --
@@ -56,7 +57,6 @@ data Statement p
   = Assign Identifier (Expr p)
   | If (Expr p) [Statement p] [Statement p]
   | Trigger Identifier [Expr p]
-  | TriggerSend Identifier (Expr p) [Expr p] -- ^ Trigger Send(MessageType, host, args...) (TriggerSend MessageType host [arg])
   | Foreach (XForeach p) Identifier (Expr p) [Statement p]
 
 data Expr p
@@ -78,9 +78,10 @@ data AType
   | TString
   | TSet AType
   | TMap AType
-  | TUnknown
   | TVoidFun [AType]
   | TVar Int
+  | TClass Identifier
+  | TMessageType
   deriving (Show, Eq)
 
 data Parsed

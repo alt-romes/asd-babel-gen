@@ -1,3 +1,7 @@
+Interface:
+  Requests:
+    broadcastRequest
+
 State:
   myself
   neighbours
@@ -11,20 +15,20 @@ Upon Init(self) do:
   channelReady <- false
 
 Upon ChannelCreated() do:
-  // We should register our own callbacks and serializers, only then,
+  ; We should register our own callbacks and serializers, only then,
   channelReady <- true
 
 Upon broadcastRequest(mid, s, m) do:
   If channelReady Then
-    Trigger floodMessage(mid, s, m, myself)
+    Trigger Send(FloodMessage, myself, mid, s, m)
 
-Upon floodMessage(mid, s, m, from) do:
+Upon Receive(FloodMessage, from, mid, s, m) do:
   If mid ∉ received Then
     received <- received U {mid}
-    ; Trigger Notify(DeliverNotification, mid, s, m) // Special syntax for cross protocol notifications?
+    Trigger deliverNotification(mid, s, m)
     Foreach host ∈ neighbours do:
       If host /= from Then
-        Trigger Send(FloodMessage, host, mid, s)
+        Trigger Send(FloodMessage, host, mid, s, m)
 
 Upon neighbourUp(upNeighbours) do:
   Foreach h ∈ upNeighbours do:

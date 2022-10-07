@@ -5,8 +5,11 @@
 {-# LANGUAGE LambdaCase #-}
 module Typechecker where
 
+-- TODO: Really, we should only do this after passing through an initial desugaring phase into another intermediate representation.
+-- Since it doesn't really matter in the long term, I'll just accept this mess
+
 import Data.Coerce
-import Data.Functor
+import qualified Data.Char as C
 import qualified Data.Set as S
 import qualified Data.Map as M
 
@@ -32,31 +35,44 @@ typecheck alg = case runInfer (inferAlg alg) of
     
 
 inferAlg :: Algorithm Parsed -> Infer (Algorithm Typed)
-inferAlg (P (StateD _ vars) tops) = do
+inferAlg (P i (StateD _ vars) tops) = do
   freshTVars <- mapM (const (TVar <$> fresh)) vars
   freshTopTVars <- mapM (const (TVar <$> fresh)) tops
   topsT <- pushScope (zip vars freshTVars <> zip (map topIdent tops) freshTopTVars) $ mapM inferTop tops
-  pure (P (StateD freshTVars vars) topsT)
+  pure (P i (StateD freshTVars vars) topsT)
     where
       topIdent :: TopDecl Parsed -> Identifier
       topIdent = \case
-        UponD _ i _ _ -> i
+        UponD _ n args _
+          | map C.toLower n == "receive" -> head args
+          | otherwise -> n
 
 inferTop :: TopDecl Parsed -> Infer (TopDecl Typed)
 inferTop = \case
-  UponD _ i args stmts -> do
-    freshTVars <- mapM (const (TVar <$> fresh)) args
-    stmtsT <- pushScope (zip args freshTVars) $ mapM inferStmt stmts
-    funT <- findInEnv i
-    constraint funT (TVoidFun freshTVars)
-    pure (UponD freshTVars i args stmtsT)
+  UponD _ name args stmts
+    | map C.toLower name == "receive" -> do
+      freshTVars <- mapM (const (TVar <$> fresh)) (drop 2 args)
+      let argsTypes = TMessageType:TClass "Host":freshTVars
+      stmtsT <- pushScope (zip (drop 1 args) (drop 1 argsTypes)) $ mapM inferStmt stmts
+      findInEnv (head args) >>= \case
+        Nothing -> pure ()
+        Just funT -> constraint funT (TVoidFun argsTypes)
+      pure (UponD argsTypes name args stmtsT)
+    | otherwise -> do
+      freshTVars <- mapM (const (TVar <$> fresh)) args
+      stmtsT <- pushScope (zip args freshTVars) $ mapM inferStmt stmts
+      findInEnv name >>= \case
+        Nothing -> pure ()
+        Just funT -> constraint funT (TVoidFun freshTVars)
+      pure (UponD freshTVars name args stmtsT)
 
 inferStmt :: Statement Parsed -> Infer (Statement Typed)
 inferStmt = cata \case
   AssignF i e -> do
     (t, e') <- inferExp e
-    it <- findInEnv i
-    constraint it t
+    findInEnv i >>= \case
+      Nothing -> error $ "couldn't find " <> i <> " to assign to"
+      Just it -> constraint it t
     pure (Assign i e')
 
   IfF e thenS elseS -> do
@@ -66,13 +82,21 @@ inferStmt = cata \case
     elseS' <- sequence elseS
     pure (If e' thenS' elseS')
  
-  TriggerF i args -> do
-    (argTys, args') <- unzip <$> mapM inferExp args
-    funT  <- findInEnv i
-    constraint funT (TVoidFun argTys)
-    pure (Trigger i args')
+  TriggerF name args
+    | map C.toLower name == "send" -> do
 
-  TriggerSendF msgType host args -> error "TriggerSend infer"
+      (argTys, args') <- unzip <$> mapM inferExp (drop 1 args)
+      findInEnv (case head args of Id n -> n; _ -> undefined) >>= \case
+        Nothing   -> -- pure () -- Couldn't find this signal, no problem, we don't know about it but might still exist of course.
+                     error $ "Couldn't find " <> show (head args) <> " in Send Trigger"
+        Just funT -> constraint funT (TVoidFun (TMessageType:argTys))
+      pure (Trigger name $ (case head args of Id n -> Id n; _ -> undefined):args')
+    | otherwise -> do
+      (argTys, args') <- unzip <$> mapM inferExp args
+      findInEnv name >>= \case
+        Nothing -> pure () -- If name isn't found it is a notification and don't add any extra constraint
+        Just funT -> constraint funT (TVoidFun argTys)
+      pure (Trigger name args')
 
   ForeachF _ name e body -> do
     nt <- TVar <$> fresh
@@ -86,7 +110,9 @@ inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
 inferExp = cata \case
   IF x -> pure (TInt, I x)
   BF x -> pure (TBool, B x)
-  IdF i -> (, Id i) <$> findInEnv i
+  IdF i -> findInEnv i >>= \case
+    Nothing -> error $ "Couldn't find id " <> i
+    Just t -> pure (t, Id i) 
   InF e1 e2 -> do
     (t1, e1') <- e1
     (t2, e2') <- e2
@@ -145,7 +171,7 @@ solve constraints = fst <$> runIdentity (runExceptT (runStateT solver (mempty, c
 type Solver = StateT Unifier (ExceptT TypeError Identity)
 type Subst = M.Map Int AType
 type Unifier = (Subst, [Constraint])
-data TypeError = UnificationFail AType AType | UnificationMismatch [AType] [AType] | InfiniteType Int AType
+data TypeError = UnificationFail AType AType | UnificationMismatch [AType] [AType] | InfiniteType Int AType deriving Show
 
 solver :: Solver Subst
 solver = do
@@ -196,8 +222,9 @@ instance Substitutable AType where
     TStringF -> TString
     TSetF t -> TSet t
     TMapF t -> TMap t
-    TUnknownF -> TUnknown
     TVoidFunF ts -> TVoidFun ts
+    TClassF n -> TClass n
+    TMessageTypeF -> TMessageType
     TVarF i -> M.findWithDefault (TVar i) i s
 
   ftv = cata \case
@@ -206,8 +233,9 @@ instance Substitutable AType where
     TStringF -> mempty
     TSetF t -> t
     TMapF t -> t
-    TUnknownF -> mempty
     TVoidFunF ts -> mconcat ts
+    TClassF _ -> mempty
+    TMessageTypeF -> mempty
     TVarF i -> S.singleton i
 
 instance Substitutable a => Substitutable [a] where
@@ -219,8 +247,8 @@ instance (Substitutable a, Substitutable b) => Substitutable (a, b) where
   ftv (a, b) = ftv a <> ftv b
 
 instance Substitutable (Algorithm Typed) where
-  applySubst s (P st tops) = P (applySubst s st) (applySubst s tops)
-  ftv (P st tops) = ftv st <> ftv tops
+  applySubst s (P i st tops) = P i (applySubst s st) (applySubst s tops)
+  ftv (P _ st tops) = ftv st <> ftv tops
     
 instance Substitutable (StateD Typed) where
   applySubst s (StateD tvs vs) = StateD (applySubst s tvs) vs
@@ -237,13 +265,11 @@ instance Substitutable (Statement Typed) where
     AssignF i e -> Assign i e
     IfF e thenS elseS -> If e thenS elseS
     TriggerF i e -> Trigger i e
-    TriggerSendF i e es -> TriggerSend i e es
     ForeachF tv i e stmts -> Foreach (applySubst s tv) i e stmts
   ftv = cata \case
     AssignF _ _ -> mempty
     IfF _ thenS elseS -> mconcat (thenS <> elseS)
     TriggerF _ _ -> mempty
-    TriggerSendF _ _ _ -> mempty
     ForeachF tv _ _ stmts -> ftv tv <> mconcat stmts
 
 -- Util
@@ -260,14 +286,16 @@ constraint a b = tell [(a,b)]
 pushScope :: [(Identifier, AType)] -> Infer a -> Infer a
 pushScope (M.fromList -> l) = local (l:)
 
-findInEnv :: Identifier -> Infer AType
+-- | find in env with fallback in case there's no such identifier on the env but
+-- its still valid since it might be a notification received by other protocols
+findInEnv :: Identifier -> Infer (Maybe AType)
 findInEnv i' = do
   r <- ask
   pure $ findInEnv' i' r
     where
-      findInEnv' :: Identifier -> REnv -> AType
+      findInEnv' :: Identifier -> REnv -> Maybe AType
       findInEnv' i = \case
-        [] -> error $ "couldn't find " <> i
+        [] -> Nothing
         x:xs -> case M.lookup i x of
                   Nothing -> findInEnv' i xs
-                  Just t  -> t
+                  Just t  -> Just t
