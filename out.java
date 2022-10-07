@@ -17,8 +17,8 @@ public class FloodBroadcast extends GenericProtocol
     private void init (Host self)
     {
         myself = self;
-        neighbours = new HashSet<Unknown11>();
-        received = new HashSet<Unknown12>();
+        neighbours = new HashSet<Host>();
+        received = new HashSet<Unknown16>();
         channelReady = false;
     }
     private void uponChannelCreated (ChannelCreated notification, short sourceProto)

@@ -262,15 +262,40 @@ instance Substitutable (TopDecl Typed) where
 
 instance Substitutable (Statement Typed) where
   applySubst s = cata \case
-    AssignF i e -> Assign i e
-    IfF e thenS elseS -> If e thenS elseS
-    TriggerF i e -> Trigger i e
-    ForeachF tv i e stmts -> Foreach (applySubst s tv) i e stmts
+    AssignF i e -> Assign i (applySubst s e)
+    IfF e thenS elseS -> If (applySubst s e) thenS elseS
+    TriggerF i e -> Trigger i (applySubst s e)
+    ForeachF tv i e stmts -> Foreach (applySubst s tv) i (applySubst s e) stmts
   ftv = cata \case
     AssignF _ _ -> mempty
     IfF _ thenS elseS -> mconcat (thenS <> elseS)
     TriggerF _ _ -> mempty
     ForeachF tv _ _ stmts -> ftv tv <> mconcat stmts
+
+instance Substitutable (Expr Typed) where
+  applySubst s = cata \case
+    SetF t n -> Set (applySubst s t) n
+    MapF t n -> Map (applySubst s t) n
+    UnionF t e f -> Union (applySubst s t) e f
+    DifferenceF t e f -> Difference (applySubst s t) e f
+    InF e f -> In e f
+    NotInF e f -> NotIn e f
+    EqF e f -> Eq e f
+    NotEqF e f -> NotEq e f
+    IF x -> I x
+    BF x -> B x
+    IdF x -> Id x
+
+  ftv = cata \case
+    SetF t e -> ftv t <> mconcat e
+    MapF t e -> error "Map"
+    UnionF t e f -> ftv t <> e <> f
+    DifferenceF t e f -> ftv t <> e <> f
+    InF e f -> e <> f
+    NotInF e f -> e <> f
+    EqF e f -> e <> f
+    NotEqF e f -> e <> f
+    _ -> mempty
 
 -- Util
 

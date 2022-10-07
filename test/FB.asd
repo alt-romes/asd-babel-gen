@@ -37,3 +37,5 @@ Upon neighbourUp(upNeighbours) do:
 Upon neighbourDown(downNeighbours) do:
   Foreach h ∈ downNeighbours do:
     neighbours <- neighbours \ {h}
+
+
