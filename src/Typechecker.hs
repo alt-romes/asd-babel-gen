@@ -184,13 +184,13 @@ solver = do
       solver
 
 unifies :: AType -> AType -> Solver Subst
-unifies = \cases
-  (TVar v) t -> v `bind` t
-  t (TVar v) -> v `bind` t
-  (TSet t1) (TSet t2) -> unifies t1 t2
-  (TMap t1) (TMap t2) -> unifies t1 t2
-  (TVoidFun ts1) (TVoidFun ts2) -> unifyMany ts1 ts2
-  t1 t2 -> if t1 == t2 then pure mempty else throwError $ UnificationFail t1 t2
+unifies a b = case (a, b) of
+  (TVar v, t) -> v `bind` t
+  (t, TVar v) -> v `bind` t
+  (TSet t1, TSet t2) -> unifies t1 t2
+  (TMap t1, TMap t2) -> unifies t1 t2
+  (TVoidFun ts1, TVoidFun ts2) -> unifyMany ts1 ts2
+  (t1, t2) -> if t1 == t2 then pure mempty else throwError $ UnificationFail t1 t2
 
 unifyMany :: [AType] -> [AType] -> Solver Subst
 unifyMany [] [] = pure mempty

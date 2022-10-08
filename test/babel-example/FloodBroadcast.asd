@@ -15,7 +15,7 @@ Upon Init(self) do:
   channelReady <- false
 
 Upon ChannelCreated() do:
-  ; We should register our own callbacks and serializers, only then,
+  // We should register our own callbacks and serializers, only then,
   channelReady <- true
 
 Upon broadcastRequest(mid, s, m) do:

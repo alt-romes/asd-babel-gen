@@ -1,1 +1,2 @@
 If we find a registerMessageHandler in the code at any time, we remove the default registration
+NotEquals should be compiled to != if PrimType, !(...).equals(...) otherwise

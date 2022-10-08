@@ -172,7 +172,9 @@ translateExp = para \case
     e1' <- e1
     e2' <- e2
     pure $ PreNot $ MethodInv $ PrimaryMethodCall e2' [] (Ident "contains") [e1']
-  EqF (_, e1) (_, e2) -> do
+  EqF (p1, e1) (_, e2) -> do
+    -- ROMES:TODO:NEXT: == if prim type, (...).equals(...) otherwise
+    -- let t = expType p1
     e1' <- e1
     e2' <- e2
     pure $ BinOp e1' Equal e2'

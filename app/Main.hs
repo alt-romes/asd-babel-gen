@@ -1,4 +1,20 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ViewPatterns #-}
 module Main where
+
+import Data.Function
+import Data.Either
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import Data.Text.Encoding
+
+import Control.Category ((>>>))
+
+import Control.Exception
+import System.Environment
+import System.OsPath
+import System.Directory.OsPath
+import qualified System.File.OsPath as F
 
 import Syntax
 import Typechecker
@@ -26,8 +42,25 @@ testProg = P
   ]
 
 
+
+
 main :: IO ()
 main = do
-  case codegen ("FloodBroadcast", 200) <$> typecheck testProg of
-    Right p -> print $ pretty p
-    Left e  -> print e
+  getArgs >>= \case
+    [] -> putStrLn "Usage: asd <PSEUDO_CODE_DIRECTORY_PATH>"
+    path':_ -> do
+      path <- encodeUtf path'
+      protocolFiles <- listDirectory path
+
+      let protocolNames = dropExtension <$> protocolFiles
+      print protocolNames
+      protocolsContents <- mapM (fmap decodeUtf8Lenient . F.readFile') ((path </>) <$> protocolFiles)
+      mapM T.putStrLn protocolsContents
+      -- map (parseProtocol >>> either (throwIO . show) pure) protocolsContents
+
+      -- typedProtocols <- typecheckProtocols protocols    & either (throwIO . show) pure
+      -- babelTower     <- codegenProtocols (zip protocolNames typedProtocols) & either (throwIO . show) pure
+
+      case codegen ("FloodBroadcast", 200) <$> typecheck testProg of
+        Right p -> print $ pretty p
+        Left e  -> print e
