@@ -33,6 +33,21 @@ typecheck :: Algorithm Parsed -> Either TypeError (Algorithm Typed)
 typecheck alg = case runInfer (inferAlg alg) of
   (alg', constraints) -> flip applySubst alg' <$> solve constraints
     
+expType :: Expr Typed -> AType
+expType = cata \case
+  IF _ -> TInt
+  BF _ -> TBool
+  IdF t _ -> t
+  InF _ _ -> TBool
+  NotInF _ _ -> TBool
+  EqF _ _ -> TBool
+  NotEqF _ _ -> TBool
+  SetF t _ -> TSet t
+  MapF _ m -> error "type map"
+  UnionF t _ _ -> TSet t
+    -- TODO: Only works for sets yet, but should also work for maps.
+  DifferenceF t _ _ -> TSet t
+    -- TODO: Only works for sets yet, but should also work for maps.
 
 inferAlg :: Algorithm Parsed -> Infer (Algorithm Typed)
 inferAlg (P i (StateD _ vars) tops) = do
@@ -86,11 +101,11 @@ inferStmt = cata \case
     | map C.toLower name == "send" -> do
 
       (argTys, args') <- unzip <$> mapM inferExp (drop 1 args)
-      findInEnv (case head args of Id n -> n; _ -> undefined) >>= \case
+      findInEnv (case head args of Id _ n -> n; _ -> undefined) >>= \case
         Nothing   -> -- pure () -- Couldn't find this signal, no problem, we don't know about it but might still exist of course.
                      error $ "Couldn't find " <> show (head args) <> " in Send Trigger"
         Just funT -> constraint funT (TVoidFun (TMessageType:argTys))
-      pure (Trigger name $ (case head args of Id n -> Id n; _ -> undefined):args')
+      pure (Trigger name $ (case head args of Id _ n -> Id undefined n; _ -> undefined):args')
     | otherwise -> do
       (argTys, args') <- unzip <$> mapM inferExp args
       findInEnv name >>= \case
@@ -110,9 +125,9 @@ inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
 inferExp = cata \case
   IF x -> pure (TInt, I x)
   BF x -> pure (TBool, B x)
-  IdF i -> findInEnv i >>= \case
+  IdF _ i -> findInEnv i >>= \case
     Nothing -> error $ "Couldn't find id " <> i
-    Just t -> pure (t, Id i) 
+    Just t -> pure (t, Id t i) 
   InF e1 e2 -> do
     (t1, e1') <- e1
     (t2, e2') <- e2
@@ -239,7 +254,7 @@ instance Substitutable AType where
     TVarF i -> S.singleton i
 
 instance Substitutable a => Substitutable [a] where
-  applySubst s as = map (applySubst s) as
+  applySubst = map . applySubst
   ftv as = mconcat $ map ftv as
 
 instance (Substitutable a, Substitutable b) => Substitutable (a, b) where
@@ -284,7 +299,7 @@ instance Substitutable (Expr Typed) where
     NotEqF e f -> NotEq e f
     IF x -> I x
     BF x -> B x
-    IdF x -> Id x
+    IdF t x -> Id (applySubst s t) x
 
   ftv = cata \case
     SetF t e -> ftv t <> mconcat e
@@ -311,12 +326,9 @@ constraint a b = tell [(a,b)]
 pushScope :: [(Identifier, AType)] -> Infer a -> Infer a
 pushScope (M.fromList -> l) = local (l:)
 
--- | find in env with fallback in case there's no such identifier on the env but
--- its still valid since it might be a notification received by other protocols
 findInEnv :: Identifier -> Infer (Maybe AType)
 findInEnv i' = do
-  r <- ask
-  pure $ findInEnv' i' r
+  findInEnv' i' <$> ask
     where
       findInEnv' :: Identifier -> REnv -> Maybe AType
       findInEnv' i = \case

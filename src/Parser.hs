@@ -86,7 +86,7 @@ pExp = makeExprParser
           , B <$> (symbol' "true" $> True <|> symbol' "false" $> False)
           , Set () <$> (symbol' "{" *> (many pExp <* optional (symbol ",")) <* symbol' "}")
           -- , Map () <$> TODO
-          , Id <$> identifier
+          , Id () <$> identifier
           ])
   [ [ binary "U" (Union ())
     , binary "\\" (Difference ())

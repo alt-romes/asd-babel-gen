@@ -64,7 +64,7 @@ data Expr p
   | B Bool
   | Set (XSet p) [Expr p] -- sets; {m}
   | Map (XMap p) [(Expr p, Expr p)] -- maps; {(m,p)}
-  | Id Identifier
+  | Id (XId p) Identifier
   | In (Expr p) (Expr p)
   | NotIn (Expr p) (Expr p)
   | Union (XUnion p) (Expr p) (Expr p)
@@ -95,6 +95,7 @@ type family XSet p
 type family XMap p
 type family XUnion p
 type family XDifference p
+type family XId p
 
 type instance XStateD  Parsed = ()
 type instance XStateD  Typed  = [AType]
@@ -110,6 +111,8 @@ type instance XUnion Parsed = ()
 type instance XUnion Typed = AType
 type instance XDifference Parsed = ()
 type instance XDifference Typed = AType
+type instance XId Parsed = ()
+type instance XId Typed = AType
 
 deriving instance Show (Expr Parsed)
 deriving instance Show (Expr Typed)

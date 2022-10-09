@@ -20,6 +20,7 @@ import Language.Java.Syntax hiding (Assign, NotEq)
 import qualified Language.Java.Syntax as J
 
 import Syntax
+import Typechecker (expType)
 
 type Env = M.Map Identifier ()
 type Babel = RWS ([(Scope, [Identifier])], ([Identifier], [Identifier])) () -- Reader: (Scope, Requests, Indications)
@@ -139,7 +140,7 @@ translateStmt = fmap BlockStmt . para \case
         -- Is a request on other protocol?
         pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendRequest"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, Lit $ String "TODO"]
       | map C.toLower name == "send" -> case zip args argsExps of
-          (Id messageType,_):(_, to):(map snd -> argsExps') ->
+          (Id _ messageType,_):(_, to):(map snd -> argsExps') ->
             pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendMsg"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst messageType,[])]) argsExps' Nothing, to]
           _ -> error "impossible :)  can't send without the correct parameters"
 
@@ -161,9 +162,7 @@ translateExp :: Expr Typed -> Babel Exp
 translateExp = para \case
   IF i -> pure $ Lit $ Int i
   BF b -> pure $ Lit $ Boolean b
-  IdF i -> do
-    i' <- translateIdentifier i
-    pure i'
+  IdF _ i -> translateIdentifier i
   InF (_, e1) (_, e2) -> do
     e1' <- e1
     e2' <- e2
@@ -173,15 +172,19 @@ translateExp = para \case
     e2' <- e2
     pure $ PreNot $ MethodInv $ PrimaryMethodCall e2' [] (Ident "contains") [e1']
   EqF (p1, e1) (_, e2) -> do
-    -- ROMES:TODO:NEXT: == if prim type, (...).equals(...) otherwise
-    -- let t = expType p1
     e1' <- e1
     e2' <- e2
-    pure $ BinOp e1' Equal e2'
-  NotEqF (_, e1) (_, e2) -> do
+    case expType p1 of
+      TInt  -> pure $ BinOp e1' Equal e2'
+      TBool -> pure $ BinOp e1' Equal e2'
+      _     -> pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
+  NotEqF (p1, e1) (_, e2) -> do
     e1' <- e1
     e2' <- e2
-    pure $ BinOp e1' J.NotEq e2'
+    case expType p1 of
+      TInt  -> pure $ BinOp e1' J.NotEq e2'
+      TBool -> pure $ BinOp e1' J.NotEq e2'
+      _     -> pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
   SetF t (unzip -> (_, ss)) -> translateType t >>= \case
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of

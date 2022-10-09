@@ -58,7 +58,7 @@ library
     import:           warnings
 
     -- Modules exported by the library.
-    exposed-modules:  ASD, Syntax, Codegen, Typechecker
+    exposed-modules:  ASD, Syntax, Codegen, Typechecker, Parser
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -69,9 +69,9 @@ library
     -- Other library packages from which modules are imported.
     build-depends:    base >=4.14.3.0,
                       recursion-schemes,
-                      containers,
-                      megaparsec,
-                      text, mtl >= 2.3, transformers,
+                      containers, bytestring, text,
+                      megaparsec, parser-combinators,
+                      mtl >= 2.3, transformers,
                       language-java
 
 
@@ -97,7 +97,9 @@ executable asd
     -- Other library packages from which modules are imported.
     build-depends:
         base >=4.14.3.0,
-        asd, language-java
+        asd, language-java,
+        directory, filepath, file-io,
+        text, bytestring
 
     -- Directories containing source files.
     hs-source-dirs:   app
