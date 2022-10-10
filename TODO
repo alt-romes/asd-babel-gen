@@ -1,2 +1,4 @@
-If we find a registerMessageHandler in the code at any time, we remove the default registration
-NotEquals should be compiled to != if PrimType, !(...).equals(...) otherwise
+[ ] Alternative (To use a copy of a Set it must be explicitly requested) (ProtoNotifications and such that return Sets or Maps should return a copy of them instead)
+[ ] If we find a registerMessageHandler in the code at any time, we remove the default channel registration?
+[x] NotEquals should be compiled to != if PrimType, !(...).equals(...) otherwise
+

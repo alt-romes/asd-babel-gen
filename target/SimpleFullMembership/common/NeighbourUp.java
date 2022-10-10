@@ -1,3 +1,5 @@
+import java.util.*;
+import pt.unl.fct.di.novasys.babel.*;
 public class NeighbourUp extends ProtoNotification
 {
   public final short NOTIFICATION_ID = 201;

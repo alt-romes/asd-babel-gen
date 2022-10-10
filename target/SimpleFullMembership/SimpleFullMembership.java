@@ -1,3 +1,5 @@
+import java.util.*;
+import pt.unl.fct.di.novasys.babel.*;
 public class SimpleFullMembership extends GenericProtocol
 {
   public final String PROTO_NAME = "SimpleFullMembership";

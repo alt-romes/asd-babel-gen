@@ -77,7 +77,8 @@ genHelperCommon ((name, args), TVoidFun argTys) nid sif protoExtends = do
         methodDecls = zipWith (\x t -> MemberDecl $ MethodDecl [Public] [] (Just t) (Ident ("get" <> upperFirst x)) [] [] Nothing (MethodBody $ Just $ Block [BlockStmt $ Return $ Just $ ExpName $ Name [Ident x]])) args argTys'
         classBody   = ClassBody $ protoFieldDecls <> fieldDecls <> [constructor] <> methodDecls
      in
-        CompilationUnit Nothing [] [ClassTypeDecl $ ClassDecl [Public] (Ident $ upperFirst name) [] (Just $ ClassRefType $ ClassType [(Ident protoExtends, [])]) [] classBody]
+        CompilationUnit Nothing [ImportDecl False (Name [Ident "java", Ident "util", Ident "*"]) False, ImportDecl False (Name [Ident "pt", Ident "unl", Ident "fct", Ident "di", Ident "novasys", Ident "babel", Ident "*"]) False]
+                                [ClassTypeDecl $ ClassDecl [Public] (Ident $ upperFirst name) [] (Just $ ClassRefType $ ClassType [(Ident protoExtends, [])]) [] classBody]
 genHelperCommon _ _ _ _ = error "impossible,,, how I wish I had done this correctly and this was all in the types,,, should have thought it through before hacking it together ;)"
 
 
@@ -135,7 +136,8 @@ translateAlg (protoName, protoId) (P (InterfaceD ts requests indications) (State
                     -- <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "subscribeNotification"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subMsgs
                      
         classBody   = ClassBody $ protoFieldDecls <> fieldDecls <> [constructor] <> methodDecls
-    pure $ CompilationUnit Nothing [] [ClassTypeDecl $ ClassDecl [Public] (Ident protoName) [] (Just $ ClassRefType $ ClassType [(Ident "GenericProtocol", [])]) [] classBody]
+    pure $ CompilationUnit Nothing [ImportDecl False (Name [Ident "java", Ident "util", Ident "*"]) False, ImportDecl False (Name [Ident "pt", Ident "unl", Ident "fct", Ident "di", Ident "novasys", Ident "babel", Ident "*"]) False]
+                                   [ClassTypeDecl $ ClassDecl [Public] (Ident protoName) [] (Just $ ClassRefType $ ClassType [(Ident "GenericProtocol", [])]) [] classBody]
 
 translateTop :: TopDecl Typed -> Babel Decl
 translateTop top = do

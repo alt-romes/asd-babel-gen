@@ -1,3 +1,5 @@
+import java.util.*;
+import pt.unl.fct.di.novasys.babel.*;
 public class DeliverNotification extends ProtoNotification
 {
   public final short NOTIFICATION_ID = 102;

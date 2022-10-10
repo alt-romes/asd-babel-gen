@@ -1,3 +1,5 @@
+import java.util.*;
+import pt.unl.fct.di.novasys.babel.*;
 public class BroadcastRequest extends ProtoRequest
 {
   public final short REQUEST_ID = 101;
