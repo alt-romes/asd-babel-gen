@@ -1,4 +1,8 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 module Codegen where
@@ -14,6 +18,7 @@ import Data.Functor.Foldable
 import Data.Bifunctor
 
 import Control.Monad
+import Control.Monad.State
 import Control.Monad.RWS.CPS
 
 import Language.Java.Syntax hiding (Assign, NotEq)
@@ -23,12 +28,70 @@ import Syntax
 import Typechecker (expType)
 
 type Env = M.Map Identifier ()
-type Babel = RWS ([(Scope, [Identifier])], ([Identifier], [Identifier])) () -- Reader: (Scope, Requests, Indications)
+type Babel = RWS ([(Scope, [Identifier])], ([(Identifier, [Identifier])], [(Identifier, [Identifier])])) () -- Reader: (Scope, Requests, Indications)
                  ([Identifier], ([Identifier], [Identifier])) -- State: (Request Handlers, Notification Subscriptions, Messages watched)
 
--- | Generate code for a Protocol, given its name and identifier
-codegen :: (Identifier, Int) -> Algorithm Typed -> J.CompilationUnit
-codegen i = runBabel . translateAlg i
+
+codegenProtocols :: [(String, Algorithm Typed)] -- ^ Algorithm and its name
+                 -> [(FilePath, J.CompilationUnit)] -- ^ Module name in hierarchy in which the root is @./@ and the associated unit
+codegenProtocols protos = first ("./" <>) <$> (`evalState` 100) do
+
+  concat <$> forM protos \(name, p@(P (InterfaceD @Typed ts reqs inds) _ _)) -> do
+    let reqTs = zip reqs (fst ts)
+        indTs = zip inds (snd ts)
+    topI <- get
+    modify' (+1)
+    rs <- forM reqTs $ \a@((rName,_),_) -> do
+      i <- freshI
+      pure (name <> "/common/" <> upperFirst rName <> ".java", genRequest a i)
+    is <- forM indTs $ \a@((iName,_),_) -> do
+      i <- freshI
+      pure (name <> "/common/" <> upperFirst iName <> ".java", genIndication a i)
+    let proto = runBabel $ translateAlg (upperFirst name, topI) p
+    put (topI+100)
+    pure ((name <> "/" <> name <> ".java", proto) : (rs <> is))
+
+genRequest :: ((Identifier, [Identifier]), AType)
+           -> Int -- ^ Identifier
+           -> J.CompilationUnit
+genRequest x i = genHelperCommon x i "REQUEST_ID" "ProtoRequest"
+
+genIndication :: ((Identifier, [Identifier]), AType)
+              -> Int -- ^ Identifier
+              -> J.CompilationUnit
+genIndication x i = genHelperCommon x i "NOTIFICATION_ID" "ProtoNotification"
+
+genHelperCommon :: ((Identifier, [Identifier]), AType)
+                -> Int -- ^ Numeric Identifier
+                -> String -- ^ Name of static identifier field
+                -> String -- ^ Name of class it should extend
+                -> J.CompilationUnit
+genHelperCommon ((name, args), TVoidFun argTys) nid sif protoExtends = do
+    let
+        argTys' = map translateType argTys
+        protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident sif)) (Just $ InitExp $ Lit $ Int $ toInteger nid)]
+                          ] 
+        fieldDecls = zipWith (\v t -> MemberDecl $ FieldDecl [Private] t [VarDecl (VarId (Ident v)) Nothing]) args argTys'
+        constructor = MemberDecl $ ConstructorDecl [Public] [] (Ident $ upperFirst name) (zipWith (\x t -> FormalParam [] t False (VarId (Ident x))) args argTys') [] $ ConstructorBody (Just $ SuperInvoke [] [ExpName $ Name [Ident sif]]) registers
+        registers = map (\x -> BlockStmt $ ExpStmt $ J.Assign (FieldLhs $ PrimaryFieldAccess This (Ident x)) EqualA (ExpName $ Name [Ident x])) args
+        methodDecls = zipWith (\x t -> MemberDecl $ MethodDecl [Public] [] (Just t) (Ident ("get" <> upperFirst x)) [] [] Nothing (MethodBody $ Just $ Block [BlockStmt $ Return $ Just $ ExpName $ Name [Ident x]])) args argTys'
+        classBody   = ClassBody $ protoFieldDecls <> fieldDecls <> [constructor] <> methodDecls
+     in
+        CompilationUnit Nothing [] [ClassTypeDecl $ ClassDecl [Public] (Ident $ upperFirst name) [] (Just $ ClassRefType $ ClassType [(Ident protoExtends, [])]) [] classBody]
+genHelperCommon _ _ _ _ = error "impossible,,, how I wish I had done this correctly and this was all in the types,,, should have thought it through before hacking it together ;)"
+
+
+  -- let (requests, indications) = bimap concat concat $ unzip $ map ((\(InterfaceD () reqs inds) -> (reqs, inds)) . interfaceD) ps
+
+  -- reqVars <- forM requests $
+  --   \(r, args) -> (r,) . TVoidFun <$> mapM (const (TVar <$> fresh)) args
+
+  -- indVars <- forM indications $
+  --   \(i, args) -> (i,) . TVoidFun <$> mapM (const (TVar <$> fresh)) args
+
+-- Should use codegenProtocols
+-- codegen :: (Identifier, Int) -> Algorithm Typed -> J.CompilationUnit
+-- codegen i = runBabel . translateAlg i
 
 data Scope = UponRequest | UponNotification | UponMessage | Init
 
@@ -47,14 +110,14 @@ registerMessage = modify . second . second . (:)
 
 -- | Translate algorithm given protocol identifier and protocol name
 translateAlg :: (Identifier, Int) -> Algorithm Typed -> Babel J.CompilationUnit
-translateAlg (protoName, protoId) (P (InterfaceD requests indications) (StateD varTypes vars) tops) = do
-  varTypes' <- mapM translateType varTypes
+translateAlg (protoName, protoId) (P (InterfaceD ts requests indications) (StateD varTypes vars) tops) = do
   -- local (\r -> foldr (\v -> M.insert v ()) r vars) do -- add vars to env
   local (second (<> (requests, indications))) do
 
     methodDecls <- forM tops translateTop
     (reqHandlers, (subNotis, subMsgs)) <- get
     let
+        varTypes' = map translateType varTypes
         protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] stringType [VarDecl (VarId (Ident "PROTO_NAME")) (Just $ InitExp $ Lit $ String protoName)]
                           , MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident "PROTO_ID")) (Just $ InitExp $ Lit $ Int $ toInteger protoId)]
                           ] 
@@ -76,10 +139,10 @@ translateAlg (protoName, protoId) (P (InterfaceD requests indications) (StateD v
 
 translateTop :: TopDecl Typed -> Babel Decl
 translateTop top = do
-  requests <- asks (fst.snd)
+  requests <- asks (fmap fst . fst . snd)
   case top of
     UponD argTypes name args stmts -> do
-      argTypes' <- mapM translateType argTypes
+      let argTypes' = map translateType argTypes
       case name of
        _| map C.toLower name == "init" -> do
            bodyStmts <- pushScope (Init, args) $ mapM translateStmt stmts
@@ -133,7 +196,7 @@ translateStmt = fmap BlockStmt . para \case
         pure $ IfThenElse e' thenS' elseS'
 
   TriggerF name args -> do
-    (_, indications) <- asks snd
+    (_, (fmap fst -> indications)) <- asks snd
     argsExps <- mapM translateExp args
     case name of
      _| name `elem` indications -> do
@@ -154,7 +217,7 @@ translateStmt = fmap BlockStmt . para \case
   ForeachF t name e (unzip -> (_, body)) -> do
     e' <- translateExp e
     body' <- sequence body
-    t' <- translateType t
+    let t' = translateType t
     pure $ EnhancedFor [] t' (Ident name) e' (StmtBlock . Block . map BlockStmt $ body')
 
 
@@ -185,7 +248,7 @@ translateExp = para \case
       TInt  -> pure $ BinOp e1' J.NotEq e2'
       TBool -> pure $ BinOp e1' J.NotEq e2'
       _     -> pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
-  SetF t (unzip -> (_, ss)) -> translateType t >>= \case
+  SetF t (unzip -> (_, ss)) -> case translateType t of
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of
       [] -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t'])]) [] Nothing
@@ -228,26 +291,26 @@ translateIdentifier i = asks fst >>= pure . trId'
                       UponMessage -> MethodInv $ PrimaryMethodCall (ExpName $ Name [Ident "msg"]) [] (Ident $ "get" <> upperFirst i) []
                       Init -> ExpName $ Name [Ident i]
 
-translateType :: AType -> Babel Type
+translateType :: AType -> Type
 translateType = cata \case
-  TIntF -> pure $ PrimType IntT
-  TBoolF -> pure $ PrimType BooleanT
-  TStringF -> pure stringType
-  TSetF x -> x >>= \case
+  TIntF -> PrimType IntT
+  TBoolF -> PrimType BooleanT
+  TStringF -> stringType
+  TSetF x -> case x of
     PrimType x' -> error $ show x' <> " is not a boxed/Object type"
-    RefType t  -> pure $ RefType $ ClassRefType $ ClassType [(Ident "Set", [ActualType t])]
-  TMapF x -> x >>= \case
+    RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Set", [ActualType t])]
+  TMapF x -> case x of
     PrimType x' -> error $ show x' <> " is not a boxed/Object type"
-    RefType t  -> pure $ RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t])]
+    RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t])]
   TVoidFunF _ -> error "Fun type"
-  TClassF n -> pure $ RefType $ ClassRefType $ ClassType [(Ident n, [])]
+  TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
   TMessageTypeF ->
     -- This code is mostly hacked together, this is not good at all, and I know
     -- of multiple many ways of doing this better, but its been hacked from the
     -- start, without a thought, so we'll just wing it, pretend we can generate
     -- MessageTypes into java types, and then never use them
-    pure $ RefType $ ClassRefType $ ClassType [(Ident "ThisShouldntEverHappen", [])] -- error "Codegen: MessageType"
-  TVarF i -> pure $ RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
+    RefType $ ClassRefType $ ClassType [(Ident "ThisShouldntEverHappen", [])] -- error "Codegen: MessageType"
+  TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
 
 makeRequest :: Identifier -> [Identifier] -> [Type] -> Babel ()
 makeRequest i ids tys = do
@@ -272,3 +335,9 @@ upperFirst :: String -> String
 upperFirst = \case
   [] -> []
   x:xs -> C.toUpper x:xs
+
+freshI :: State Int Int
+freshI = do
+  i <- get
+  put (let !x = i+1 in x)
+  pure i

@@ -1,6 +1,8 @@
 Interface:
   Requests:
-    broadcastRequest
+    broadcastRequest(mid, s, m)
+  Indications:
+    deliverNotification(mid, s, m)
 
 State:
   myself

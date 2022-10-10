@@ -14,6 +14,7 @@ import qualified Data.Set as S
 import qualified Data.Map as M
 
 import Data.Functor.Foldable
+import Data.Bifunctor
 
 import Control.Monad
 import Control.Monad.Identity
@@ -29,9 +30,27 @@ type REnv = [M.Map Identifier AType]
 type Constraint = (AType, AType)
 newtype Uniq = Uniq Int
 
-typecheck :: Algorithm Parsed -> Either TypeError (Algorithm Typed)
-typecheck alg = case runInfer (inferAlg alg) of
-  (alg', constraints) -> flip applySubst alg' <$> solve constraints
+-- No longer possible to make multi-module compilation more straightforward
+-- since it handles interfaces at the beginning differently
+-- typecheck :: Algorithm Parsed -> Either TypeError (Algorithm Typed)
+-- typecheck alg = case runInfer (inferAlg alg) of
+--   (alg', constraints) -> flip applySubst alg' <$> solve constraints
+
+typecheckProtocols :: [Algorithm Parsed] -> Either TypeError [Algorithm Typed]
+typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
+  (ps', constraints) -> flip applySubst ps' <$> solve constraints
+  where
+    m :: Infer [Algorithm Typed]
+    m = do
+      let (requests, indications) = bimap concat concat $ unzip $ map ((\(InterfaceD () reqs inds) -> (reqs, inds)) . interfaceD) ps
+
+      reqVars <- forM requests $
+        \(r, args) -> (r,) . TVoidFun <$> mapM (const (TVar <$> fresh)) args
+
+      indVars <- forM indications $
+        \(i, args) -> (i,) . TVoidFun <$> mapM (const (TVar <$> fresh)) args
+
+      pushScope (reqVars <> indVars) $ mapM inferAlg ps
     
 expType :: Expr Typed -> AType
 expType = cata \case
@@ -52,15 +71,25 @@ expType = cata \case
 inferAlg :: Algorithm Parsed -> Infer (Algorithm Typed)
 inferAlg (P i (StateD _ vars) tops) = do
   freshTVars <- mapM (const (TVar <$> fresh)) vars
-  freshTopTVars <- mapM (const (TVar <$> fresh)) tops
-  topsT <- pushScope (zip vars freshTVars <> zip (map topIdent tops) freshTopTVars) $ mapM inferTop tops
-  pure (P i (StateD freshTVars vars) topsT)
+  unknownTops <- filterM (\(topIdent -> t) -> findInEnv t >>= \case Nothing -> pure True; Just _ -> pure False) tops
+  freshUTopTVars <- mapM (const (TVar <$> fresh)) unknownTops
+  topsT <- pushScope (zip vars freshTVars <> zip (map topIdent unknownTops) freshUTopTVars) $ mapM inferTop tops
+  i' <- inferInterface i
+  pure (P i' (StateD freshTVars vars) topsT)
     where
       topIdent :: TopDecl Parsed -> Identifier
       topIdent = \case
         UponD _ n args _
           | map C.toLower n == "receive" -> head args
           | otherwise -> n
+
+inferInterface :: InterfaceD Parsed -> Infer (InterfaceD Typed)
+inferInterface (InterfaceD () reqs inds) = do
+  reqTs <- forM reqs $ \(r,_) -> findInEnv r >>= \case Nothing -> error ("couldn't find interface request " <> r)
+                                                       Just t  -> pure t
+  indTs <- forM inds $ \(i,_) -> findInEnv i >>= \case Nothing -> error ("couldn't find interface indication " <> i)
+                                                       Just t  -> pure t
+  pure $ InterfaceD (reqTs, indTs) reqs inds
 
 inferTop :: TopDecl Parsed -> Infer (TopDecl Typed)
 inferTop = \case

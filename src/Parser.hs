@@ -22,20 +22,25 @@ import Syntax
 
 type Parser = Parsec Void String
 
+parseProtocol :: String -- ^ Filename
+              ->  String -- ^ String to parse
+              -> Either String (Algorithm Parsed)
+parseProtocol x = first errorBundlePretty . parse pAlg x
+
 pAlg :: Parser (Algorithm Parsed)
 pAlg = nonIndented $ P <$> pInterfaceD <*> pStateD <*> many pTopDecl
 
-pInterfaceD :: Parser InterfaceD
+pInterfaceD :: Parser (InterfaceD Parsed)
 pInterfaceD = indentBlock do
   _ <- symbol' "interface" *> symbol ":"
   pure $ L.IndentMany Nothing (\(bimap mconcat mconcat . unzip -> (reqs, indications)) ->
-                                  pure $ InterfaceD reqs indications) do
+                                  pure $ InterfaceD () reqs indications) do
     reqs <- optional $ indentBlock do
       _ <- symbol' "requests" *> symbol ":"
-      pure $ L.IndentMany Nothing pure identifier
+      pure $ L.IndentMany Nothing pure ((,) <$> identifier <*> parens args)
     indications <- optional $ indentBlock do
       _ <- symbol' "indications" *> symbol ":"
-      pure $ L.IndentMany Nothing pure identifier
+      pure $ L.IndentMany Nothing pure ((,) <$> identifier <*> parens args)
     pure (fromMaybe [] reqs, fromMaybe [] indications) 
 
 pStateD :: Parser (StateD Parsed)
@@ -52,7 +57,7 @@ pTopDecl = choice
     uponD = indentBlock do
       _ <- symbol' "upon"
       i <- identifier
-      ids <- parens (many (identifier <* optional (symbol ",")))
+      ids <- parens args
       _ <- symbol "do" <* optional (symbol ":")
       pure $ L.IndentMany Nothing (pure . UponD @Parsed () i ids) pStatement
 
@@ -104,6 +109,10 @@ binary name f = InfixL (f <$ symbol name)
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
+
+args :: Parser [Identifier]
+args = many (identifier <* optional (symbol ","))
+
 
 --- Lexing
 

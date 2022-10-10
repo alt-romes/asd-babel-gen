@@ -41,10 +41,11 @@ Timers:
 
 type Identifier = String
 
-data Algorithm p = P InterfaceD (StateD p) [TopDecl p]
+data Algorithm p = P { interfaceD :: InterfaceD p
+                     , stateD     :: StateD p
+                     , topDecls   :: [TopDecl p] }
 
-data InterfaceD = InterfaceD [Identifier] [Identifier] -- [Request] [Indication], only the method name matters
-  deriving Show
+data InterfaceD p = InterfaceD (XInterfaceD p) [(Identifier, [Identifier])] [(Identifier, [Identifier])] -- [Request] [Indication], only the method name matters
 data StateD p = StateD (XStateD p) [Identifier]
 
 data TopDecl p
@@ -96,6 +97,7 @@ type family XMap p
 type family XUnion p
 type family XDifference p
 type family XId p
+type family XInterfaceD p
 
 type instance XStateD  Parsed = ()
 type instance XStateD  Typed  = [AType]
@@ -113,6 +115,8 @@ type instance XDifference Parsed = ()
 type instance XDifference Typed = AType
 type instance XId Parsed = ()
 type instance XId Typed = AType
+type instance XInterfaceD Parsed = ()
+type instance XInterfaceD Typed = ([AType], [AType])
 
 deriving instance Show (Expr Parsed)
 deriving instance Show (Expr Typed)
@@ -124,6 +128,8 @@ deriving instance Show (TopDecl Parsed)
 deriving instance Show (TopDecl Typed)
 deriving instance Show (Algorithm Parsed)
 deriving instance Show (Algorithm Typed)
+deriving instance Show (InterfaceD Parsed)
+deriving instance Show (InterfaceD Typed)
 
 makeBaseFunctor ''Statement
 makeBaseFunctor ''Expr

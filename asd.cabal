@@ -69,7 +69,7 @@ library
     -- Other library packages from which modules are imported.
     build-depends:    base >=4.14.3.0,
                       recursion-schemes,
-                      containers, bytestring, text,
+                      containers, bytestring, text >= 2.0.1,
                       megaparsec, parser-combinators,
                       mtl >= 2.3, transformers,
                       language-java

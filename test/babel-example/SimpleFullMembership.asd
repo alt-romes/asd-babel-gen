@@ -1,0 +1,39 @@
+Interface:
+    Requests:
+
+    Indications:
+        neighbourUp(p)
+        neighbourDown(p)
+
+State:
+    self // identifier of self
+    membership // set with all neighbours
+    subsetSize // number of neighbours to send to other
+    T          // period between anouncements
+
+Upon Init(myself, ssSize, t, contact) do:
+    self <- myself
+    membership <- {}
+    if contact /= {} then
+        membership <- membership U {contact}
+    subsetSize <- ssSize
+    T <- t
+    // Setup Periodic Timer SampleTimer(T)
+
+// Upon Timer SampleTimer do:
+//     If #membership >= 1 then:
+//         target <- Call random(membership)
+//         sample <- {self}
+//         sample <- Call random(subsetSize, membership \ {target})
+//         Trigger Send(SampleMSG, target, sample)
+
+Upon Receive(SampleMessage, s, sample) do:
+    Foreach p ∈ sample do:
+        If p ∉ membership then
+            membership <- membership U {p}
+            Trigger neighbourUp(p)
+
+Upon ChannelClosed(p) do:
+    if p in membership then
+        membership <- membership \ {p}
+        Trigger neighbourDown(p)
