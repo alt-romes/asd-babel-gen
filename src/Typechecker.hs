@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE LambdaCase #-}
@@ -106,7 +107,7 @@ inferTop = \case
       freshTVars <- mapM (const (TVar <$> fresh)) args
       stmtsT <- pushScope (zip args freshTVars) $ mapM inferStmt stmts
       findInEnv name >>= \case
-        Nothing -> pure ()
+        Nothing -> error $ "Not in scope" <> name
         Just funT -> constraint funT (TVoidFun freshTVars)
       pure (UponD freshTVars name args stmtsT)
 
@@ -291,8 +292,12 @@ instance (Substitutable a, Substitutable b) => Substitutable (a, b) where
   ftv (a, b) = ftv a <> ftv b
 
 instance Substitutable (Algorithm Typed) where
-  applySubst s (P i st tops) = P i (applySubst s st) (applySubst s tops)
-  ftv (P _ st tops) = ftv st <> ftv tops
+  applySubst s (P i st tops) = P (applySubst s i) (applySubst s st) (applySubst s tops)
+  ftv (P i st tops) = ftv i <> ftv st <> ftv tops
+
+instance Substitutable (InterfaceD Typed) where
+  applySubst s (InterfaceD tv reqs inds) = InterfaceD (applySubst s tv) reqs inds
+  ftv (InterfaceD tv _ _) = ftv tv
     
 instance Substitutable (StateD Typed) where
   applySubst s (StateD tvs vs) = StateD (applySubst s tvs) vs

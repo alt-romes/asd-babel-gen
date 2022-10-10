@@ -1,14 +1,14 @@
 public class NeighbourUp extends ProtoNotification
 {
   public final short NOTIFICATION_ID = 201;
-  private Unknown6 p;
-  public NeighbourUp (Unknown6 p)
+  private final Set<Host> upNeighbours;
+  public NeighbourUp (Set<Host> upNeighbours)
   {
     super(NOTIFICATION_ID);
-    this.p = p;
+    this.upNeighbours = upNeighbours;
   }
-  public Unknown6 getP ()
+  public Set<Host> getUpNeighbours ()
   {
-    return p;
+    return upNeighbours;
   }
 }

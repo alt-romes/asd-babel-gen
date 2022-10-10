@@ -1,25 +1,25 @@
 public class DeliverNotification extends ProtoNotification
 {
   public final short NOTIFICATION_ID = 102;
-  private Unknown3 mid;
-  private Unknown4 s;
-  private Unknown5 m;
-  public DeliverNotification (Unknown3 mid, Unknown4 s, Unknown5 m)
+  private final Unknown21 mid;
+  private final Unknown22 s;
+  private final Unknown23 m;
+  public DeliverNotification (Unknown21 mid, Unknown22 s, Unknown23 m)
   {
     super(NOTIFICATION_ID);
     this.mid = mid;
     this.s = s;
     this.m = m;
   }
-  public Unknown3 getMid ()
+  public Unknown21 getMid ()
   {
     return mid;
   }
-  public Unknown4 getS ()
+  public Unknown22 getS ()
   {
     return s;
   }
-  public Unknown5 getM ()
+  public Unknown23 getM ()
   {
     return m;
   }

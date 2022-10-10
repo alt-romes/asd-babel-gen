@@ -2,8 +2,8 @@ Interface:
     Requests:
 
     Indications:
-        neighbourUp(p)
-        neighbourDown(p)
+        neighbourUp(upNeighbours)
+        neighbourDown(downNeighbours)
 
 State:
     self // identifier of self

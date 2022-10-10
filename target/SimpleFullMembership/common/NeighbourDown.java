@@ -1,14 +1,14 @@
 public class NeighbourDown extends ProtoNotification
 {
   public final short NOTIFICATION_ID = 202;
-  private Unknown7 p;
-  public NeighbourDown (Unknown7 p)
+  private final Set<Host> downNeighbours;
+  public NeighbourDown (Set<Host> downNeighbours)
   {
     super(NOTIFICATION_ID);
-    this.p = p;
+    this.downNeighbours = downNeighbours;
   }
-  public Unknown7 getP ()
+  public Set<Host> getDownNeighbours ()
   {
-    return p;
+    return downNeighbours;
   }
 }
