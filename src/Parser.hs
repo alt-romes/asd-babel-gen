@@ -89,6 +89,7 @@ pExp :: Parser (Expr Parsed)
 pExp = makeExprParser
   (choice [ I <$> integer
           , B <$> (symbol' "true" $> True <|> symbol' "false" $> False)
+          , Bottom <$  (symbol "⊥" <|> symbol' "null")
           , Set () <$> (symbol' "{" *> (many pExp <* optional (symbol ",")) <* symbol' "}")
           -- , Map () <$> TODO
           , Id () <$> identifier

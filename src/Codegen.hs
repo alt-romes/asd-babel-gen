@@ -231,6 +231,7 @@ translateExp :: Expr Typed -> Babel Exp
 translateExp = para \case
   IF i -> pure $ Lit $ Int i
   BF b -> pure $ Lit $ Boolean b
+  BottomF -> pure $ Lit Null
   IdF _ i -> translateIdentifier i
   InF (_, e1) (_, e2) -> do
     e1' <- e1
@@ -240,20 +241,26 @@ translateExp = para \case
     e1' <- e1
     e2' <- e2
     pure $ PreNot $ MethodInv $ PrimaryMethodCall e2' [] (Ident "contains") [e1']
-  EqF (p1, e1) (_, e2) -> do
+  EqF (p1, e1) (p2, e2) -> do
     e1' <- e1
     e2' <- e2
     case expType p1 of
       TInt  -> pure $ BinOp e1' Equal e2'
       TBool -> pure $ BinOp e1' Equal e2'
-      _     -> pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
-  NotEqF (p1, e1) (_, e2) -> do
+      TNull -> pure $ BinOp e1' Equal e2'
+      _     -> case expType p2 of
+                 TNull -> pure $ BinOp e1' Equal e2'
+                 _     -> pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
+  NotEqF (p1, e1) (p2, e2) -> do
     e1' <- e1
     e2' <- e2
     case expType p1 of
       TInt  -> pure $ BinOp e1' J.NotEq e2'
       TBool -> pure $ BinOp e1' J.NotEq e2'
-      _     -> pure $ PreNot $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
+      TNull -> pure $ BinOp e1' J.NotEq e2'
+      _     -> case expType p2 of
+                 TNull -> pure $ BinOp e1' J.NotEq e2'
+                 _     -> pure $ PreNot $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
   SetF t (unzip -> (_, ss)) -> case translateType t of
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of
@@ -301,6 +308,7 @@ translateIdentifier i = asks fst >>= pure . trId'
 
 translateType :: AType -> Type
 translateType = cata \case
+  TNullF -> RefType $ ClassRefType $ ClassType []
   TIntF -> PrimType IntT
   TBoolF -> PrimType BooleanT
   TStringF -> stringType

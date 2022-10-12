@@ -66,6 +66,7 @@ data Statement p
 data Expr p
   = I Integer
   | B Bool
+  | Bottom
   | Set (XSet p) [Expr p] -- sets; {m}
   | Map (XMap p) [(Expr p, Expr p)] -- maps; {(m,p)}
   | Id (XId p) Identifier
@@ -86,6 +87,7 @@ data AType
   | TVar Int
   | TClass Identifier
   | TMessageType
+  | TNull
   deriving (Show, Eq)
 
 data Parsed

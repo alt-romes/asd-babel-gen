@@ -14,7 +14,7 @@ State:
 Upon Init(myself, ssSize, t, contact) do:
     self <- myself
     membership <- {}
-    if contact /= {} then
+    if contact /= ⊥ then
         membership <- membership U {contact}
     subsetSize <- ssSize
     T <- t

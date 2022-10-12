@@ -17,7 +17,7 @@ public class SimpleFullMembership extends GenericProtocol
   {
     self = myself;
     membership = new HashSet<Set<Host>>();
-    if (contact.equals(new HashSet<Host>()))
+    if (contact != null)
     {
       membership.add(contact);
     }

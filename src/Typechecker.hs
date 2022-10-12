@@ -63,6 +63,7 @@ typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
     
 expType :: Expr Typed -> AType
 expType = cata \case
+  BottomF -> TNull
   IF _ -> TInt
   BF _ -> TBool
   IdF t _ -> t
@@ -89,7 +90,7 @@ inferAlg (P i (StateD _ vars) tops) = do
       topIdent :: TopDecl Parsed -> Identifier
       topIdent = \case
         UponD _ n args _
-          | map C.toLower n == "receive" -> case head args of Arg n _ -> n
+          | map C.toLower n == "receive" -> case head args of Arg n' _ -> n'
           | otherwise -> n
 
 inferInterface :: InterfaceD Parsed -> Infer (InterfaceD Typed)
@@ -163,6 +164,7 @@ inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
 inferExp = cata \case
   IF x -> pure (TInt, I x)
   BF x -> pure (TBool, B x)
+  BottomF -> pure (TNull, Bottom)
   IdF _ i -> findInEnv i >>= \case
     Nothing -> error $ "Couldn't find id " <> i
     Just t -> pure (t, Id t i) 
@@ -215,6 +217,13 @@ inferExp = cata \case
     -- TODO: Constraint to set or map
     pure (t1, Difference t1 e1' e2')
 
+isPrimT :: AType -> Bool
+isPrimT = \case
+  TInt  -> True
+  TBool -> True
+  _     -> False
+  
+
 runInfer :: Infer a -> (a, [Constraint])
 runInfer m = evalRWS m mempty (Uniq 0)
 
@@ -224,7 +233,12 @@ solve constraints = fst <$> runIdentity (runExceptT (runStateT solver (mempty, c
 type Solver = StateT Unifier (ExceptT TypeError Identity)
 type Subst = M.Map Int AType
 type Unifier = (Subst, [Constraint])
-data TypeError = UnificationFail AType AType | UnificationMismatch [AType] [AType] | InfiniteType Int AType deriving Show
+data TypeError
+  = UnificationFail AType AType
+  | UnificationMismatch [AType] [AType]
+  | InfiniteType Int AType
+  | PrimTypesCantBeNull AType
+  deriving Show
 
 solver :: Solver Subst
 solver = do
@@ -238,6 +252,12 @@ solver = do
 
 unifies :: AType -> AType -> Solver Subst
 unifies a b = case (a, b) of
+  (TNull, t)
+    | isPrimT t -> throwError $ PrimTypesCantBeNull t
+    | otherwise -> pure mempty
+  (t, TNull)
+    | isPrimT t -> throwError $ PrimTypesCantBeNull t
+    | otherwise -> pure mempty
   (TVar v, t) -> v `bind` t
   (t, TVar v) -> v `bind` t
   (TSet t1, TSet t2) -> unifies t1 t2
@@ -279,6 +299,7 @@ instance Substitutable AType where
     TClassF n -> TClass n
     TMessageTypeF -> TMessageType
     TVarF i -> M.findWithDefault (TVar i) i s
+    TNullF -> TNull
 
   ftv = cata \case
     TIntF -> mempty
@@ -290,6 +311,7 @@ instance Substitutable AType where
     TClassF _ -> mempty
     TMessageTypeF -> mempty
     TVarF i -> S.singleton i
+    TNullF -> mempty
 
 instance Substitutable a => Substitutable [a] where
   applySubst = map . applySubst
@@ -342,6 +364,7 @@ instance Substitutable (Expr Typed) where
     IF x -> I x
     BF x -> B x
     IdF t x -> Id (applySubst s t) x
+    BottomF -> Bottom
 
   ftv = cata \case
     SetF t e -> ftv t <> mconcat e
