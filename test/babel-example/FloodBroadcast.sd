@@ -1,6 +1,6 @@
 Interface:
   Requests:
-    broadcastRequest(mid, s, m)
+    broadcastRequest(mid : UUID, s, m)
   Indications:
     deliverNotification(mid, s, m)
 

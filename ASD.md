@@ -271,3 +271,264 @@ your list of neighbours
     * t = 1
     * Eager push (usually associated with a maximum number of jumps a message
         can do aka "time to live" or "TTL")
+
+
+
+-----
+
+
+## Unstructured overlays based on Super-Peers
+
+* Small fraction of processes (with more resources, more power) are promoted to
+    Super-Peers
+* Super-Peers form an unstructured overlay among them
+* Regular process connect to a super-peer and transimt to it the index of its
+    resources
+* Queries are forwarded to the super-peer and then are disseminated only among
+    super-peers
+* Pros: singificantly erduces the number of messages
+* Cons: How to decide who is the super peer? Load in the system is highly
+    unbalanced. Fault model is no longer uniform too
+
+## Resource location (exact match)
+
+Given a set of processes containting different sets of resources, locate the
+processes that contain a given  resource given its unique identifier
+
+### Consistent Hashing
+
+Very common technique in distributed systems
+
+When we apply a hash function to the same input we get the same output...
+
+With consistent hashing we can form a DHT to solve our problem ?
+
+* Attribute a hash to  each process based on  unique determinants
+* Use the same hash function  to generate hashes for  resources  to store in
+    the network
+* Process whose hash is closest to the resource's hash keeps the information
+    regarding where the resource is  (full details)
+    * First, the one registering the resource registers it in the  closest node
+    * Second, nodes looking  for the resource query the node closest to the
+        resource hash and ask it for the location of the resource (which might
+        have to periodically updated by the node that registered it)
+
+When we have the full membership, this allows to build a **One-Hop Distributed
+Hash  Table (DHT)**,  which is quite popular in ...
+
+But we can do better and without assuming full membership which is quite costly
+on big enough  networks
+
+## Structured Overlay Networks
+
+Basically, it has a fixed topology, and we can take advantage of that to make
+sure messages go in the right direction. We know the topology a-priori :)
+
+
+First step:
+
+The  most common structured overlay topology is a ring, that connects nodes in
+order considering their identifiers
+
+In fact, the ring structure, in this type of structured overlay is the prime
+correctness criteria
+
+This is not good enough because of **long paths between processes**. It'd be
+particularly bad for a node to crash since it breaks the ring.
+
+Second step:
+
+We add some additional overlay links (in the order of ln (#π)) to speedup
+things.
+
+(1) We now have information to deal with faults,
+(2) and we can reach any other process in a worst-case logarithmic number of hops.
+
+The non-trivial part is how to build this structured overlay network.
+
+Relevant Examples (Big literature):
+
+* Chord
+* Pastry
+* Kademlia
+
+
+
+## The Chord Protocol
+
+Assuming  process identifiers have m bits
+
+State:
+    // finger[k] | first node on circle that succeeds (n + 2^(k-1)  mod 2^m,  1 <= k <= m           // >>
+    // successor | the next node on the identifier circle;  finger[1].node
+    // predecessor | the previous node on the identifier circle
+
+
+
+    // We might have multiple positions in the finger table occupied by the same process
+
+
+Key functionality of Chord is to answer "Who is the  node  responsible for this
+identifier?":
+
+// ask  node n to find the successor of id
+n.find.successor(id):
+
+// search the local  table for the  highest predecessor of id
+n.closest.preceding_node(id)
+
+The rest is to keep the two above methods possible
+
+// create a new Chord ring
+n.create() // as Upon Init()
+    predecessor = nil
+    sucessor = n // himself, on beginning its  just a ring of you
+
+n.join(n'):
+    predecessor = nil
+    sucessor = n'.find_sucessor(n)
+
+
+Ensure that  the ring converges; stabilizing  the ring:
+
+// called periodically,  verifies n's immediate
+// must be stabilized often enough or ring might accumulate  faults  and crumble
+n.stabilize()
+    x = sucessor.predecessor;
+    if (x \in (n, sucessor)) // if is correct then it should be me; otherwise something has happened
+        sucessor = x  // either way we accept it is such
+    sucessor.notify(n)
+
+// n' thinks it might be our predecessor
+n.notify(n'):
+    // so we upate him  if he should indeed be our predecessor
+    // which is when it is nil (has failed or just joined)
+    // or when it is actually in between the current predecessor and us
+    if (predecessor is nil or n' \in (predecessor, n))
+        predecessor = n'
+
+// called periodically, refreshses finger table entries
+// next stores the index of the next finger to fix
+n.fix_fingers()
+    next = next +  1
+    if (next > m)
+        next  = 1;
+    finger[next]  = find_sucessor(n+2^(next-1))
+
+//called periodically, checks  whether predecessor has failed
+n.check_predecessor()
+    if  (predecessor has failed) // send a message  to predecessor in order  to confirm your reply. if there's no reply we assume it failed
+        predeessor = nil
+
+The successor might not always be correct. Anything that happens in the section
+in which the  successor is incorrect might lead to incorrect nodes
+
+### Other Structured Overlay Networks
+
+Other type of organization of nodes  that isn't necessarily a ring but also has
+an a-priori topology. The trick is that the more restrictions we add to the
+topology, the more difficult the implementation and corner cases
+
+e.g. a Torus is more fault tolerant and a hyper cube is faster :)
+
+Other examples:
+
+Tree-based overlay networks:
+* Good for disseminate messages with low overhead
+* Also good to aggregate information
+* not failulre resistant
+
+## Overview of Overlays
+
+* Unstructured (or Random)
+
+    * Even if someone fails, we can easily replace i t
+    * Easy to build and maintain
+    * Limited efficiency for some use cases
+
+* Structured
+    *  Very efficient for particular types of applications  since  we can take
+        advantage of our knowledge of the topology
+    * Less robust to failures (a failed process can only be replaed by a
+        limited numbr of processes)
+    * More complex and costly algorithms
+
+
+
+------
+
+## Kademlia
+
+* Identifier space is seen as a binary tree
+* The distance between nodes is computed through the XOR operation (nodes with
+    the most bit prefixes in common)
+* There are no specialized messages to manage the DHT topology, instead nodes
+    rely on all other messages from the protocol to gather and update
+    information about the network
+
+
+High level:
+* Nodes are organized in a binary tree according to their identifier prefix
+    (some sort of trie map?)
+* Each node maintains information about all subtrees where he does not belong
+    * You know more about subtrees closer to you than about the ones further
+        away
+* Routing (or lookup) is performed like other DHTs, in a recursive way
+* The lookup can be done several paths in parallel (up to K, where k is the
+    amount of nodes you'll contact?)
+
+* Main messages:
+    * PING (maybe unneeded)
+    * FIND_NODE
+    * STORE
+    * FIND_VALUE
+* All messages carry the identifier of the node sending it (so they can be used
+    to manage K-buckets of nodes that receive them)
+
+* Node State:
+    * ?
+    * ?
+    * ?
+    <!-- * Each node contains a set of K-buckets -->
+    <!-- * Initially each node has a single k-bucket -->
+    * When the K bucket is filled, it is broken into two buckets and one will
+        never be used again and the other will keep growing
+
+    * At bootstrap, a node will execute a lookup for its own identifier to
+        poopulate and initialize its local k-buckets (but this could be
+        technically avoided because when something is needed it will bootstrap
+        itself?)
+
+---
+
+HyParView
+===
+
+Core idea: 2 partial views managed with different strategies.
+You only change the partial view when forced (e.g. on join, on death)
+
+[Reactive Strategy]
+(Active)
+Partial views only updated as a reaction to some external event
+Small sized (fanout+1) (which is a limit)
+Symmetric
+
+[Cyclic Strategy]
+(Passive)
+Partial views are updated as a result of some periodically operation
+Larger size in order of: k x #(active view)
+Just for fault tolerance
+
+
+How it works:
+...
+
+
+### Partially structured overlay: Plumbtree (to use as a broadcast protocol)
+
+-- Broadcast protocol that builds a topology when broadcasting
+
+Intuition: if we have a connected overlay and we flood a message, we end up with?
+
+
+

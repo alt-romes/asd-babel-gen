@@ -3,17 +3,17 @@ import pt.unl.fct.di.novasys.babel.*;
 public class SimpleFullMembership extends GenericProtocol
 {
   public final String PROTO_NAME = "SimpleFullMembership";
-  public final short PROTO_ID = 200;
-  private Unknown36 self;
+  public final short PROTO_ID = 100;
+  private Unknown15 self;
   private Set<Set<Host>> membership;
-  private Unknown37 subsetSize;
-  private Unknown38 T;
+  private Unknown16 subsetSize;
+  private Unknown17 T;
   public SimpleFullMembership () throws HandlerRegistrationException
   {
     super(PROTO_NAME, PROTO_ID);
     subscribeNotification(ChannelClosed.NOTIFICATION_ID, this :: uponChannelClosed);
   }
-  private void init (Unknown36 myself, Unknown37 ssSize, Unknown38 t, Set<Host> contact)
+  private void init (Unknown15 myself, Unknown16 ssSize, Unknown17 t, Set<Host> contact)
   {
     self = myself;
     membership = new HashSet<Set<Host>>();
@@ -30,7 +30,7 @@ public class SimpleFullMembership extends GenericProtocol
                                           if (!membership.contains(p))
                                           {
                                             membership.add(p);
-                                            sendRequest(new NeighbourUp(p), "TODO");
+                                            triggerNotification(new NeighbourUp(p));
                                           }
                                         }
   }
@@ -39,7 +39,7 @@ public class SimpleFullMembership extends GenericProtocol
     if (membership.contains(notification.getP()))
     {
       membership.remove(notification.getP());
-      sendRequest(new NeighbourDown(notification.getP()), "TODO");
+      triggerNotification(new NeighbourDown(notification.getP()));
     }
   }
 }

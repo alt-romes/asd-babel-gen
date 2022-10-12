@@ -23,7 +23,7 @@ import Syntax
 type Parser = Parsec Void String
 
 parseProtocol :: String -- ^ Filename
-              ->  String -- ^ String to parse
+              -> String -- ^ String to parse
               -> Either String (Algorithm Parsed)
 parseProtocol x = first errorBundlePretty . parse pAlg x
 
@@ -110,9 +110,13 @@ binary name f = InfixL (f <$ symbol name)
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
-args :: Parser [Identifier]
-args = many (identifier <* optional (symbol ","))
+args :: Parser [Arg]
+args = many ((Arg <$> identifier <*> optional (symbol ":" *> atype)) <* optional (symbol ","))
 
+atype :: Parser AType
+atype = choice
+  [ TClass <$> identifier
+  ]
 
 --- Lexing
 

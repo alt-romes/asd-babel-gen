@@ -28,9 +28,11 @@ import Syntax
 import Typechecker (expType)
 
 type Env = M.Map Identifier ()
-type Babel = RWS ([(Scope, [Identifier])], ([(Identifier, [Identifier])], [(Identifier, [Identifier])])) () -- Reader: (Scope, Requests, Indications)
+type Babel = RWS ([(Scope, [Identifier])], ([Request], [Indication])) () -- Reader: (Scope, (Requests, Indications))
                  ([Identifier], ([Identifier], [Identifier])) -- State: (Request Handlers, Notification Subscriptions, Messages watched)
 
+type Indication = (Identifier, [Arg]) -- ^ Name, Args
+type Request    = (Identifier, [Arg]) -- ^ Name, Args
 
 codegenProtocols :: [(String, Algorithm Typed)] -- ^ Algorithm and its name
                  -> [(FilePath, J.CompilationUnit)] -- ^ Module name in hierarchy in which the root is @./@ and the associated unit
@@ -51,22 +53,22 @@ codegenProtocols protos = first ("./" <>) <$> (`evalState` 100) do
     put (topI+100)
     pure ((name <> "/" <> name <> ".java", proto) : (rs <> is))
 
-genRequest :: ((Identifier, [Identifier]), AType)
+genRequest :: ((Identifier, [Arg]), AType)
            -> Int -- ^ Identifier
            -> J.CompilationUnit
 genRequest x i = genHelperCommon x i "REQUEST_ID" "ProtoRequest"
 
-genIndication :: ((Identifier, [Identifier]), AType)
+genIndication :: ((Identifier, [Arg]), AType)
               -> Int -- ^ Identifier
               -> J.CompilationUnit
 genIndication x i = genHelperCommon x i "NOTIFICATION_ID" "ProtoNotification"
 
-genHelperCommon :: ((Identifier, [Identifier]), AType)
+genHelperCommon :: ((Identifier, [Arg]), AType)
                 -> Int -- ^ Numeric Identifier
                 -> String -- ^ Name of static identifier field
                 -> String -- ^ Name of class it should extend
                 -> J.CompilationUnit
-genHelperCommon ((name, args), TVoidFun argTys) nid sif protoExtends = do
+genHelperCommon ((name, map (\(Arg n _) -> n) -> args), TVoidFun argTys) nid sif protoExtends = do
     let
         argTys' = map translateType argTys
         protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident sif)) (Just $ InitExp $ Lit $ Int $ toInteger nid)]
@@ -143,7 +145,7 @@ translateTop :: TopDecl Typed -> Babel Decl
 translateTop top = do
   requests <- asks (fmap fst . fst . snd)
   case top of
-    UponD argTypes name args stmts -> do
+    UponD argTypes name (map argName -> args) stmts -> do
       let argTypes' = map translateType argTypes
       case name of
        _| map C.toLower name == "init" -> do
@@ -198,10 +200,10 @@ translateStmt = fmap BlockStmt . para \case
         pure $ IfThenElse e' thenS' elseS'
 
   TriggerF name args -> do
-    (_, (fmap fst -> indications)) <- asks snd
+    ((fmap fst -> requests), (fmap fst -> indications)) <- asks snd
     argsExps <- mapM translateExp args
     case name of
-     _| name `elem` indications -> do
+     _| name `elem` requests -> do
         -- Is a request on other protocol?
         pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendRequest"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, Lit $ String "TODO"]
       | map C.toLower name == "send" -> case zip args argsExps of
@@ -209,8 +211,10 @@ translateStmt = fmap BlockStmt . para \case
             pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendMsg"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst messageType,[])]) argsExps' Nothing, to]
           _ -> error "impossible :)  can't send without the correct parameters"
 
-      | otherwise -> do
+      | name `elem` indications -> do
         pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "triggerNotification"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing]
+
+      | otherwise -> error $ "Unknown trigger " <> name
 
 
     -- makeNotification args argTypes'

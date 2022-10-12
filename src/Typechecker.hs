@@ -46,10 +46,18 @@ typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
       let (requests, indications) = bimap concat concat $ unzip $ map ((\(InterfaceD () reqs inds) -> (reqs, inds)) . interfaceD) ps
 
       reqVars <- forM requests $
-        \(r, args) -> (r,) . TVoidFun <$> mapM (const (TVar <$> fresh)) args
+        \(r, args) -> (r,) . TVoidFun <$> mapM (\(Arg _ t) -> do
+            v <- TVar <$> fresh
+            case t of
+              Nothing -> pure v
+              Just t' -> constraint t' v >> pure v) args
 
       indVars <- forM indications $
-        \(i, args) -> (i,) . TVoidFun <$> mapM (const (TVar <$> fresh)) args
+        \(i, args) -> (i,) . TVoidFun <$> mapM (\(Arg _ t) -> do
+            v <- TVar <$> fresh
+            case t of
+              Nothing -> pure v
+              Just t' -> constraint t' v >> pure v) args
 
       pushScope (reqVars <> indVars) $ mapM inferAlg ps
     
@@ -81,7 +89,7 @@ inferAlg (P i (StateD _ vars) tops) = do
       topIdent :: TopDecl Parsed -> Identifier
       topIdent = \case
         UponD _ n args _
-          | map C.toLower n == "receive" -> head args
+          | map C.toLower n == "receive" -> case head args of Arg n _ -> n
           | otherwise -> n
 
 inferInterface :: InterfaceD Parsed -> Infer (InterfaceD Typed)
@@ -96,16 +104,16 @@ inferTop :: TopDecl Parsed -> Infer (TopDecl Typed)
 inferTop = \case
   UponD _ name args stmts
     | map C.toLower name == "receive" -> do
-      freshTVars <- mapM (const (TVar <$> fresh)) (drop 2 args)
-      let argsTypes = TMessageType:TClass "Host":freshTVars
-      stmtsT <- pushScope (zip (drop 1 args) (drop 1 argsTypes)) $ mapM inferStmt stmts
-      findInEnv (head args) >>= \case
+      freshTVarsOrTypes <- mapM (\(Arg _ t) -> maybe (TVar <$> fresh) pure t) (drop 2 args)
+      let argsTypes = TMessageType:TClass "Host":freshTVarsOrTypes
+      stmtsT <- pushScope (zipWith (\(Arg n _) t -> (n,t)) (drop 1 args) (drop 1 argsTypes)) $ mapM inferStmt stmts
+      findInEnv (case head args of Arg n _ -> n) >>= \case
         Nothing -> pure ()
         Just funT -> constraint funT (TVoidFun argsTypes)
       pure (UponD argsTypes name args stmtsT)
     | otherwise -> do
-      freshTVars <- mapM (const (TVar <$> fresh)) args
-      stmtsT <- pushScope (zip args freshTVars) $ mapM inferStmt stmts
+      freshTVars <- mapM (\(Arg _ t) -> maybe (TVar <$> fresh) pure t) args
+      stmtsT <- pushScope (zipWith (\(Arg n _) t -> (n,t)) args freshTVars) $ mapM inferStmt stmts
       findInEnv name >>= \case
         Nothing -> error $ "Not in scope" <> name
         Just funT -> constraint funT (TVoidFun freshTVars)

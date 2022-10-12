@@ -20,13 +20,6 @@ Upon Init(myself, ssSize, t, contact) do:
     T <- t
     // Setup Periodic Timer SampleTimer(T)
 
-// Upon Timer SampleTimer do:
-//     If #membership >= 1 then:
-//         target <- Call random(membership)
-//         sample <- {self}
-//         sample <- Call random(subsetSize, membership \ {target})
-//         Trigger Send(SampleMSG, target, sample)
-
 Upon Receive(SampleMessage, s, sample) do:
     Foreach p ∈ sample do:
         If p ∉ membership then
@@ -37,3 +30,13 @@ Upon ChannelClosed(p) do:
     if p in membership then
         membership <- membership \ {p}
         Trigger neighbourDown(p)
+
+
+
+// Upon Timer SampleTimer do:
+//     If #membership >= 1 then:
+//         target <- Call random(membership)
+//         sample <- {self}
+//         sample <- Call random(subsetSize, membership \ {target})
+//         Trigger Send(SampleMSG, target, sample)
+

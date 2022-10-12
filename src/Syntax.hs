@@ -45,11 +45,14 @@ data Algorithm p = P { interfaceD :: InterfaceD p
                      , stateD     :: StateD p
                      , topDecls   :: [TopDecl p] }
 
-data InterfaceD p = InterfaceD (XInterfaceD p) [(Identifier, [Identifier])] [(Identifier, [Identifier])] -- [Request] [Indication], only the method name matters
+data InterfaceD p = InterfaceD (XInterfaceD p) [(Identifier, [Arg])] [(Identifier, [Arg])] -- [Request] [Indication], only the method name matters
 data StateD p = StateD (XStateD p) [Identifier]
 
+data Arg = Arg { argName :: Identifier, argType :: Maybe AType }
+  deriving Show
+
 data TopDecl p
- = UponD (XUponD p) Identifier [Identifier] [Statement p]
+ = UponD (XUponD p) Identifier [Arg] [Statement p]
  -- | ProcedureD Expr
  -- | MessagesD  --
  -- | TimersD    --
@@ -134,4 +137,3 @@ deriving instance Show (InterfaceD Typed)
 makeBaseFunctor ''Statement
 makeBaseFunctor ''Expr
 makeBaseFunctor ''AType
-
