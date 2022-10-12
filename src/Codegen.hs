@@ -253,7 +253,7 @@ translateExp = para \case
     case expType p1 of
       TInt  -> pure $ BinOp e1' J.NotEq e2'
       TBool -> pure $ BinOp e1' J.NotEq e2'
-      _     -> pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
+      _     -> pure $ PreNot $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
   SetF t (unzip -> (_, ss)) -> case translateType t of
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of
@@ -289,6 +289,8 @@ translateIdentifier i = asks fst >>= pure . trId'
     trId' :: [(Scope, [Identifier])] -> Exp
     trId' = \case
       [] -> ExpName $ Name [Ident i]
+      (UponMessage, from:_):_
+        | i == from -> ExpName $ Name [Ident i] -- Is Host "from"
       (s,l):xs -> case L.find (== i) l of
                     Nothing -> trId' xs
                     Just _  -> case s of
