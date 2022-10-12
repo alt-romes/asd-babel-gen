@@ -5,41 +5,41 @@ public class SimpleFullMembership extends GenericProtocol
   public final String PROTO_NAME = "SimpleFullMembership";
   public final short PROTO_ID = 100;
   private Unknown15 self;
-  private Set<Set<Host>> membership;
+  private Set<Host> membership;
   private Unknown16 subsetSize;
-  private Unknown17 T;
+  private Unknown17 tau;
   public SimpleFullMembership () throws HandlerRegistrationException
   {
     super(PROTO_NAME, PROTO_ID);
     subscribeNotification(ChannelClosed.NOTIFICATION_ID, this :: uponChannelClosed);
   }
-  private void init (Unknown15 myself, Unknown16 ssSize, Unknown17 t, Set<Host> contact)
+  private void init (Unknown15 myself, Unknown16 ssSize, Unknown17 t, Host contact)
   {
     self = myself;
-    membership = new HashSet<Set<Host>>();
+    membership = new HashSet<Host>();
     if (contact != null)
     {
       membership.add(contact);
     }
     subsetSize = ssSize;
-    T = t;
+    tau = t;
   }
   private void uponSampleMessage (SampleMessage msg, Host s, short sourceProto)
   {
-    for (Set<Host> p : msg.getSample()) {
-                                          if (!membership.contains(p))
-                                          {
-                                            membership.add(p);
-                                            triggerNotification(new NeighbourUp(p));
-                                          }
-                                        }
+    for (Host p : msg.getSample()) {
+                                     if (!membership.contains(p))
+                                     {
+                                       membership.add(p);
+                                       triggerNotification(new NeighbourUp(new HashSet<Host>(Arrays.asList(p))));
+                                     }
+                                   }
   }
   private void uponChannelClosed (ChannelClosed notification, short sourceProto)
   {
     if (membership.contains(notification.getP()))
     {
       membership.remove(notification.getP());
-      triggerNotification(new NeighbourDown(notification.getP()));
+      triggerNotification(new NeighbourDown(new HashSet<Host>(Arrays.asList(notification.getP()))));
     }
   }
 }

@@ -6,7 +6,7 @@ public class FloodBroadcast extends GenericProtocol
   public final short PROTO_ID = 200;
   private Host myself;
   private Set<Host> neighbours;
-  private Set<Unknown36> received;
+  private Set<UUID> received;
   private boolean channelReady;
   public FloodBroadcast () throws HandlerRegistrationException
   {
@@ -20,7 +20,7 @@ public class FloodBroadcast extends GenericProtocol
   {
     myself = self;
     neighbours = new HashSet<Host>();
-    received = new HashSet<Unknown36>();
+    received = new HashSet<UUID>();
     channelReady = false;
   }
   private void uponChannelCreated (ChannelCreated notification, short sourceProto)
@@ -31,7 +31,7 @@ public class FloodBroadcast extends GenericProtocol
   {
     if (channelReady)
     {
-      sendMsg(new FloodMessage(request.getMid(), request.getS(), request.getM()), myself);
+      sendMsg(new Myself(request.getS(), request.getM()), request.getMid());
     }
   }
   private void uponFloodMessage (FloodMessage msg, Host from, short sourceProto)
@@ -43,7 +43,7 @@ public class FloodBroadcast extends GenericProtocol
       for (Host host : neighbours) {
                                      if (!host.equals(from))
                                      {
-                                       sendMsg(new FloodMessage(msg.getMid(), msg.getS(), msg.getM()), host);
+                                       sendMsg(new Host(msg.getS(), msg.getM()), msg.getMid());
                                      }
                                    }
     }

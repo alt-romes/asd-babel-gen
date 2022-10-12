@@ -45,14 +45,21 @@ data Algorithm p = P { interfaceD :: InterfaceD p
                      , stateD     :: StateD p
                      , topDecls   :: [TopDecl p] }
 
-data InterfaceD p = InterfaceD (XInterfaceD p) [(Identifier, [Arg])] [(Identifier, [Arg])] -- [Request] [Indication], only the method name matters
+data InterfaceD p = InterfaceD (XInterfaceD p) [FLDecl] [FLDecl] -- [Request] [Indication], only the method name matters
+
+-- Function Like Declaration
+data FLDecl = FLDecl Identifier [Arg] deriving Show
+-- Function Like Call
+data FLCall p = FLCall Identifier [Expr p]
+
 data StateD p = StateD (XStateD p) [Identifier]
 
 data Arg = Arg { argName :: Identifier, argType :: Maybe AType }
   deriving Show
 
 data TopDecl p
- = UponD (XUponD p) Identifier [Arg] [Statement p]
+ = UponD (XUponD p) FLDecl [Statement p]
+ | UponReceiveD (XUponReceiveD p) Identifier [Arg] [Statement p]
  -- | ProcedureD Expr
  -- | MessagesD  --
  -- | TimersD    --
@@ -60,7 +67,8 @@ data TopDecl p
 data Statement p
   = Assign Identifier (Expr p)
   | If (Expr p) [Statement p] [Statement p]
-  | Trigger Identifier [Expr p]
+  | TriggerSend Identifier [Expr p]
+  | Trigger (FLCall p)
   | Foreach (XForeach p) Identifier (Expr p) [Statement p]
 
 data Expr p
@@ -86,7 +94,6 @@ data AType
   | TVoidFun [AType]
   | TVar Int
   | TClass Identifier
-  | TMessageType
   | TNull
   deriving (Show, Eq)
 
@@ -96,6 +103,7 @@ data Typed
 -- Trees that Grow
 type family XStateD  p
 type family XUponD   p
+type family XUponReceiveD   p
 type family XForeach p
 type family XSet p
 type family XMap p
@@ -108,6 +116,8 @@ type instance XStateD  Parsed = ()
 type instance XStateD  Typed  = [AType]
 type instance XUponD   Parsed = ()
 type instance XUponD   Typed  = [AType]
+type instance XUponReceiveD Parsed = ()
+type instance XUponReceiveD Typed = [AType]
 type instance XForeach Parsed = ()
 type instance XForeach Typed  = AType
 type instance XSet Parsed = ()
@@ -135,6 +145,8 @@ deriving instance Show (Algorithm Parsed)
 deriving instance Show (Algorithm Typed)
 deriving instance Show (InterfaceD Parsed)
 deriving instance Show (InterfaceD Typed)
+deriving instance Show (FLCall Parsed)
+deriving instance Show (FLCall Typed)
 
 makeBaseFunctor ''Statement
 makeBaseFunctor ''Expr

@@ -46,21 +46,21 @@ typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
       let (requests, indications) = bimap concat concat $ unzip $ map ((\(InterfaceD () reqs inds) -> (reqs, inds)) . interfaceD) ps
 
       reqVars <- forM requests $
-        \(r, args) -> (r,) . TVoidFun <$> mapM (\(Arg _ t) -> do
+        \(FLDecl r args) -> (r,) . TVoidFun <$> mapM (\(Arg _ t) -> do
             v <- TVar <$> fresh
             case t of
               Nothing -> pure v
               Just t' -> constraint t' v >> pure v) args
 
       indVars <- forM indications $
-        \(i, args) -> (i,) . TVoidFun <$> mapM (\(Arg _ t) -> do
+        \(FLDecl i args) -> (i,) . TVoidFun <$> mapM (\(Arg _ t) -> do
             v <- TVar <$> fresh
             case t of
               Nothing -> pure v
               Just t' -> constraint t' v >> pure v) args
 
       pushScope (reqVars <> indVars) $ mapM inferAlg ps
-    
+
 expType :: Expr Typed -> AType
 expType = cata \case
   BottomF -> TNull
@@ -81,7 +81,7 @@ expType = cata \case
 inferAlg :: Algorithm Parsed -> Infer (Algorithm Typed)
 inferAlg (P i (StateD _ vars) tops) = do
   freshTVars <- mapM (const (TVar <$> fresh)) vars
-  unknownTops <- filterM (\(topIdent -> t) -> findInEnv t >>= \case Nothing -> pure True; Just _ -> pure False) tops
+  unknownTops <- filterM (\(topIdent -> t) -> findInEnv t >>= pure . maybe True (const False)) tops
   freshUTopTVars <- mapM (const (TVar <$> fresh)) unknownTops
   topsT <- pushScope (zip vars freshTVars <> zip (map topIdent unknownTops) freshUTopTVars) $ mapM inferTop tops
   i' <- inferInterface i
@@ -89,36 +89,34 @@ inferAlg (P i (StateD _ vars) tops) = do
     where
       topIdent :: TopDecl Parsed -> Identifier
       topIdent = \case
-        UponD _ n args _
-          | map C.toLower n == "receive" -> case head args of Arg n' _ -> n'
-          | otherwise -> n
+        UponD _ (FLDecl n _) _ -> n
+        UponReceiveD _ n _ _   -> n
 
 inferInterface :: InterfaceD Parsed -> Infer (InterfaceD Typed)
 inferInterface (InterfaceD () reqs inds) = do
-  reqTs <- forM reqs $ \(r,_) -> findInEnv r >>= \case Nothing -> error ("couldn't find interface request " <> r)
-                                                       Just t  -> pure t
-  indTs <- forM inds $ \(i,_) -> findInEnv i >>= \case Nothing -> error ("couldn't find interface indication " <> i)
-                                                       Just t  -> pure t
+  reqTs <- forM reqs $ \(FLDecl r _) -> findInEnv r >>= maybe (error ("couldn't find interface request " <> r)) pure
+  indTs <- forM inds $ \(FLDecl i _) -> findInEnv i >>= maybe (error ("couldn't find interface indication " <> i)) pure
   pure $ InterfaceD (reqTs, indTs) reqs inds
 
 inferTop :: TopDecl Parsed -> Infer (TopDecl Typed)
 inferTop = \case
-  UponD _ name args stmts
-    | map C.toLower name == "receive" -> do
-      freshTVarsOrTypes <- mapM (\(Arg _ t) -> maybe (TVar <$> fresh) pure t) (drop 2 args)
-      let argsTypes = TMessageType:TClass "Host":freshTVarsOrTypes
-      stmtsT <- pushScope (zipWith (\(Arg n _) t -> (n,t)) (drop 1 args) (drop 1 argsTypes)) $ mapM inferStmt stmts
-      findInEnv (case head args of Arg n _ -> n) >>= \case
-        Nothing -> pure ()
+
+  UponReceiveD _ name args stmts -> do
+      freshTVarsOrTypes <- mapM (\(Arg _ t) -> maybe (TVar <$> fresh) pure t) (drop 1 args)
+      let argsTypes = TClass "Host":freshTVarsOrTypes
+      stmtsT <- pushScope (zipWith (\(Arg n _) t -> (n,t)) args argsTypes) $ mapM inferStmt stmts
+      findInEnv name >>= \case
+        Nothing -> error $ "Not in scope" <> name
         Just funT -> constraint funT (TVoidFun argsTypes)
-      pure (UponD argsTypes name args stmtsT)
-    | otherwise -> do
+      pure (UponReceiveD argsTypes name args stmtsT)
+
+  UponD _ (FLDecl name args) stmts -> do
       freshTVars <- mapM (\(Arg _ t) -> maybe (TVar <$> fresh) pure t) args
       stmtsT <- pushScope (zipWith (\(Arg n _) t -> (n,t)) args freshTVars) $ mapM inferStmt stmts
       findInEnv name >>= \case
         Nothing -> error $ "Not in scope" <> name
         Just funT -> constraint funT (TVoidFun freshTVars)
-      pure (UponD freshTVars name args stmtsT)
+      pure (UponD freshTVars (FLDecl name args) stmtsT)
 
 inferStmt :: Statement Parsed -> Infer (Statement Typed)
 inferStmt = cata \case
@@ -136,21 +134,20 @@ inferStmt = cata \case
     elseS' <- sequence elseS
     pure (If e' thenS' elseS')
  
-  TriggerF name args
-    | map C.toLower name == "send" -> do
+  TriggerSendF name args -> do
 
-      (argTys, args') <- unzip <$> mapM inferExp (drop 1 args)
-      findInEnv (case head args of Id _ n -> n; _ -> undefined) >>= \case
-        Nothing   -> -- pure () -- Couldn't find this signal, no problem, we don't know about it but might still exist of course.
-                     error $ "Couldn't find " <> show (head args) <> " in Send Trigger"
-        Just funT -> constraint funT (TVoidFun (TMessageType:argTys))
-      pure (Trigger name $ (case head args of Id _ n -> Id undefined n; _ -> undefined):args')
-    | otherwise -> do
+      (argTys, args') <- unzip <$> mapM inferExp args
+      findInEnv name >>= \case
+        Nothing   -> error $ "Couldn't find " <> name <> " in Send Trigger"
+        Just funT -> constraint funT (TVoidFun argTys)
+      pure (TriggerSend name args')
+
+  TriggerF (FLCall name args) -> do
       (argTys, args') <- unzip <$> mapM inferExp args
       findInEnv name >>= \case
         Nothing -> pure () -- If name isn't found it is a notification and don't add any extra constraint
         Just funT -> constraint funT (TVoidFun argTys)
-      pure (Trigger name args')
+      pure (Trigger (FLCall name args'))
 
   ForeachF _ name e body -> do
     nt <- TVar <$> fresh
@@ -297,7 +294,6 @@ instance Substitutable AType where
     TMapF t -> TMap t
     TVoidFunF ts -> TVoidFun ts
     TClassF n -> TClass n
-    TMessageTypeF -> TMessageType
     TVarF i -> M.findWithDefault (TVar i) i s
     TNullF -> TNull
 
@@ -309,7 +305,6 @@ instance Substitutable AType where
     TMapF t -> t
     TVoidFunF ts -> mconcat ts
     TClassF _ -> mempty
-    TMessageTypeF -> mempty
     TVarF i -> S.singleton i
     TNullF -> mempty
 
@@ -335,20 +330,24 @@ instance Substitutable (StateD Typed) where
 
 instance Substitutable (TopDecl Typed) where
   applySubst s = \case
-    UponD tvs i args body -> UponD (applySubst s tvs) i args (applySubst s body)
+    UponD tvs fld body -> UponD (applySubst s tvs) fld (applySubst s body)
+    UponReceiveD tvs i as body -> UponReceiveD (applySubst s tvs) i as (applySubst s body)
   ftv = \case
-    UponD tvs _ _ body -> ftv tvs <> ftv body
+    UponD tvs _ body -> ftv tvs <> ftv body
+    UponReceiveD tvs _ _ body -> ftv tvs <> ftv body
 
 instance Substitutable (Statement Typed) where
   applySubst s = cata \case
     AssignF i e -> Assign i (applySubst s e)
     IfF e thenS elseS -> If (applySubst s e) thenS elseS
-    TriggerF i e -> Trigger i (applySubst s e)
+    TriggerSendF i e -> TriggerSend i (applySubst s e)
+    TriggerF (FLCall i e) -> Trigger $ FLCall i (applySubst s e)
     ForeachF tv i e stmts -> Foreach (applySubst s tv) i (applySubst s e) stmts
   ftv = cata \case
     AssignF _ _ -> mempty
     IfF _ thenS elseS -> mconcat (thenS <> elseS)
-    TriggerF _ _ -> mempty
+    TriggerF (FLCall _ e) -> ftv e
+    TriggerSendF _ e -> ftv e
     ForeachF tv _ _ stmts -> ftv tv <> mconcat stmts
 
 instance Substitutable (Expr Typed) where

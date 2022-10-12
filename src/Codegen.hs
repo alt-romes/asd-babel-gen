@@ -31,8 +31,8 @@ type Env = M.Map Identifier ()
 type Babel = RWS ([(Scope, [Identifier])], ([Request], [Indication])) () -- Reader: (Scope, (Requests, Indications))
                  ([Identifier], ([Identifier], [Identifier])) -- State: (Request Handlers, Notification Subscriptions, Messages watched)
 
-type Indication = (Identifier, [Arg]) -- ^ Name, Args
-type Request    = (Identifier, [Arg]) -- ^ Name, Args
+type Indication = FLDecl
+type Request    = FLDecl
 
 codegenProtocols :: [(String, Algorithm Typed)] -- ^ Algorithm and its name
                  -> [(FilePath, J.CompilationUnit)] -- ^ Module name in hierarchy in which the root is @./@ and the associated unit
@@ -43,32 +43,32 @@ codegenProtocols protos = first ("./" <>) <$> (`evalState` 100) do
         indTs = zip inds (snd ts)
     topI <- get
     modify' (+1)
-    rs <- forM reqTs $ \a@((rName,_),_) -> do
+    rs <- forM reqTs $ \a@(FLDecl rName _,_) -> do
       i <- freshI
       pure (name <> "/common/" <> upperFirst rName <> ".java", genRequest a i)
-    is <- forM indTs $ \a@((iName,_),_) -> do
+    is <- forM indTs $ \a@(FLDecl iName _,_) -> do
       i <- freshI
       pure (name <> "/common/" <> upperFirst iName <> ".java", genIndication a i)
     let proto = runBabel $ translateAlg (upperFirst name, topI) p
     put (topI+100)
     pure ((name <> "/" <> name <> ".java", proto) : (rs <> is))
 
-genRequest :: ((Identifier, [Arg]), AType)
+genRequest :: (FLDecl, AType)
            -> Int -- ^ Identifier
            -> J.CompilationUnit
 genRequest x i = genHelperCommon x i "REQUEST_ID" "ProtoRequest"
 
-genIndication :: ((Identifier, [Arg]), AType)
+genIndication :: (FLDecl, AType)
               -> Int -- ^ Identifier
               -> J.CompilationUnit
 genIndication x i = genHelperCommon x i "NOTIFICATION_ID" "ProtoNotification"
 
-genHelperCommon :: ((Identifier, [Arg]), AType)
+genHelperCommon :: (FLDecl, AType)
                 -> Int -- ^ Numeric Identifier
                 -> String -- ^ Name of static identifier field
                 -> String -- ^ Name of class it should extend
                 -> J.CompilationUnit
-genHelperCommon ((name, map (\(Arg n _) -> n) -> args), TVoidFun argTys) nid sif protoExtends = do
+genHelperCommon (FLDecl name (map argName -> args), TVoidFun argTys) nid sif protoExtends = do
     let
         argTys' = map translateType argTys
         protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident sif)) (Just $ InitExp $ Lit $ Int $ toInteger nid)]
@@ -143,27 +143,29 @@ translateAlg (protoName, protoId) (P (InterfaceD ts requests indications) (State
 
 translateTop :: TopDecl Typed -> Babel Decl
 translateTop top = do
-  requests <- asks (fmap fst . fst . snd)
+  requests <- asks (fmap (\(FLDecl n _) -> n) . fst . snd)
   case top of
-    UponD argTypes name (map argName -> args) stmts -> do
+    UponReceiveD argTypes messageType (map argName -> args) stmts -> do
+      let argTypes' = map translateType argTypes
+      case args of
+        from:args' -> do
+          bodyStmts <- pushScope (UponMessage, from:args') $ mapM translateStmt stmts
+          makeMessage messageType args' (drop 1 argTypes')
+          registerMessage messageType
+          pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident ("upon" <> upperFirst messageType)) [ FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident $ upperFirst messageType, [])]) False (VarId (Ident "msg"))
+                                                                                                         , FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident "Host", [])]) False (VarId (Ident from)) 
+                                                                                                         , FormalParam [] (PrimType ShortT) False (VarId (Ident "sourceProto"))
+                                                                                                         -- , FormalParam [] (PrimType IntT) False (VarId (Ident "channelId"))
+                                                                                                         ] [] Nothing (MethodBody $ Just $ Block bodyStmts)
+        _ -> error "Incorrect args for Receive. Excepting Receive(MessageType, src, args...)"
+
+    UponD argTypes (FLDecl name (map argName -> args)) stmts -> do
       let argTypes' = map translateType argTypes
       case name of
+
        _| map C.toLower name == "init" -> do
            bodyStmts <- pushScope (Init, args) $ mapM translateStmt stmts
            pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident "init") (map (\(a, t) -> FormalParam [] t False (VarId (Ident a))) (zip args argTypes')) [] Nothing (MethodBody $ Just $ Block bodyStmts)
-
-        | map C.toLower name == "receive" -> do
-           case args of
-             messageType:from:args' -> do
-               bodyStmts <- pushScope (UponMessage, from:args') $ mapM translateStmt stmts
-               makeMessage messageType args' (drop 2 argTypes')
-               registerMessage messageType
-               pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident ("upon" <> upperFirst messageType)) [ FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident $ upperFirst messageType, [])]) False (VarId (Ident "msg"))
-                                                                                                              , FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident "Host", [])]) False (VarId (Ident from)) 
-                                                                                                              , FormalParam [] (PrimType ShortT) False (VarId (Ident "sourceProto"))
-                                                                                                              -- , FormalParam [] (PrimType IntT) False (VarId (Ident "channelId"))
-                                                                                                              ] [] Nothing (MethodBody $ Just $ Block bodyStmts)
-             _ -> error "Incorrect args for Receive. Excepting Receive(MessageType, src, args...)"
 
         | name `elem` requests -> do
             registerRequestHandler name
@@ -199,17 +201,21 @@ translateStmt = fmap BlockStmt . para \case
         elseS' <- StmtBlock . Block . map BlockStmt <$> sequence elseS
         pure $ IfThenElse e' thenS' elseS'
 
-  TriggerF name args -> do
-    ((fmap fst -> requests), (fmap fst -> indications)) <- asks snd
+  TriggerSendF name args -> do
+    argsExps <- mapM translateExp args
+    case zip args argsExps of
+        (Id _ messageType,_):(_, to):(map snd -> argsExps') ->
+          pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendMsg"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst messageType,[])]) argsExps' Nothing, to]
+        _ -> error "impossible :)  can't send without the correct parameters"
+
+
+  TriggerF (FLCall name args) -> do
+    (requests, indications) <- asks (bimap (map (\(FLDecl n _) -> n)) (map (\(FLDecl n _) -> n)) . snd)
     argsExps <- mapM translateExp args
     case name of
      _| name `elem` requests -> do
         -- Is a request on other protocol?
         pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendRequest"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, Lit $ String "TODO"]
-      | map C.toLower name == "send" -> case zip args argsExps of
-          (Id _ messageType,_):(_, to):(map snd -> argsExps') ->
-            pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendMsg"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst messageType,[])]) argsExps' Nothing, to]
-          _ -> error "impossible :)  can't send without the correct parameters"
 
       | name `elem` indications -> do
         pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "triggerNotification"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing]
@@ -320,12 +326,6 @@ translateType = cata \case
     RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t])]
   TVoidFunF _ -> error "Fun type"
   TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
-  TMessageTypeF ->
-    -- This code is mostly hacked together, this is not good at all, and I know
-    -- of multiple many ways of doing this better, but its been hacked from the
-    -- start, without a thought, so we'll just wing it, pretend we can generate
-    -- MessageTypes into java types, and then never use them
-    RefType $ ClassRefType $ ClassType [(Ident "ThisShouldntEverHappen", [])] -- error "Codegen: MessageType"
   TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
 
 makeRequest :: Identifier -> [Identifier] -> [Type] -> Babel ()

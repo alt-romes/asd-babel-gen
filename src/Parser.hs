@@ -30,6 +30,12 @@ parseProtocol x = first errorBundlePretty . parse pAlg x
 pAlg :: Parser (Algorithm Parsed)
 pAlg = nonIndented $ P <$> pInterfaceD <*> pStateD <*> many pTopDecl
 
+pFLDecl :: Parser FLDecl
+pFLDecl = FLDecl <$> identifier <*> parens args
+
+pFLCall :: Parser (FLCall Parsed)
+pFLCall = FLCall <$> identifier <*> parens argsExp
+
 pInterfaceD :: Parser (InterfaceD Parsed)
 pInterfaceD = indentBlock do
   _ <- symbol' "interface" *> symbol ":"
@@ -37,10 +43,10 @@ pInterfaceD = indentBlock do
                                   pure $ InterfaceD () reqs indications) do
     reqs <- optional $ indentBlock do
       _ <- symbol' "requests" *> symbol ":"
-      pure $ L.IndentMany Nothing pure ((,) <$> identifier <*> parens args)
+      pure $ L.IndentMany Nothing pure pFLDecl
     indications <- optional $ indentBlock do
       _ <- symbol' "indications" *> symbol ":"
-      pure $ L.IndentMany Nothing pure ((,) <$> identifier <*> parens args)
+      pure $ L.IndentMany Nothing pure pFLDecl
     pure (fromMaybe [] reqs, fromMaybe [] indications) 
 
 pStateD :: Parser (StateD Parsed)
@@ -50,21 +56,24 @@ pStateD = indentBlock do
 
 pTopDecl :: Parser (TopDecl Parsed)
 pTopDecl = choice
-  [ uponD
+  [ try uponReceiveD
+  , uponD
   ]
 
   where
+    uponReceiveD = indentBlock do
+      (i,as) <- symbol' "upon" *> symbol' "receive" *> parens ((,) <$> identifier <* symbol "," <*> args) <* symbol "do" <* optional (symbol ":")
+      pure $ L.IndentMany Nothing (pure . UponReceiveD @Parsed () i as) pStatement
+
     uponD = indentBlock do
-      _ <- symbol' "upon"
-      i <- identifier
-      ids <- parens args
-      _ <- symbol "do" <* optional (symbol ":")
-      pure $ L.IndentMany Nothing (pure . UponD @Parsed () i ids) pStatement
+      fld <- symbol' "upon" *> pFLDecl <* symbol "do" <* optional (symbol ":")
+      pure $ L.IndentMany Nothing (pure . UponD @Parsed () fld) pStatement
 
 pStatement :: Parser (Statement Parsed)
 pStatement = choice
   [ pIf
-  , symbol' "trigger" $> Trigger <*> identifier <*> parens (many (pExp <* optional (symbol ",")))
+  , try (symbol' "trigger" *> symbol' "send" $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp))
+  , symbol' "trigger" $> Trigger <*> pFLCall
   , pForeach
   , Assign <$> identifier <* symbol "<-" <*> pExp
   ]
@@ -113,6 +122,9 @@ parens = between (symbol "(") (symbol ")")
 
 args :: Parser [Arg]
 args = many ((Arg <$> identifier <*> optional (symbol ":" *> atype)) <* optional (symbol ","))
+
+argsExp :: Parser [Expr Parsed]
+argsExp = many (pExp <* optional (symbol ","))
 
 atype :: Parser AType
 atype = choice
