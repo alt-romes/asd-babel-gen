@@ -38,6 +38,8 @@ codegenProtocols :: [(String, Algorithm Typed)] -- ^ Algorithm and its name
                  -> [(FilePath, J.CompilationUnit)] -- ^ Module name in hierarchy in which the root is @./@ and the associated unit
 codegenProtocols protos = first ("./" <>) <$> (`evalState` 100) do
 
+  let (allReqs, allInds) = mconcat $ map (\(_, P (InterfaceD @Typed _ reqs inds) _ _) -> (reqs, inds)) protos
+
   concat <$> forM protos \(name, p@(P (InterfaceD @Typed ts reqs inds) _ _)) -> do
     let reqTs = zip reqs (fst ts)
         indTs = zip inds (snd ts)
@@ -49,7 +51,7 @@ codegenProtocols protos = first ("./" <>) <$> (`evalState` 100) do
     is <- forM indTs $ \a@(FLDecl iName _,_) -> do
       i <- freshI
       pure (name <> "/common/" <> upperFirst iName <> ".java", genIndication a i)
-    let proto = runBabel $ translateAlg (upperFirst name, topI) p
+    let proto = runBabel $ local (second (<> (allReqs, allInds))) $ translateAlg (upperFirst name, topI) p
     put (topI+100)
     pure ((name <> "/" <> name <> ".java", proto) : (rs <> is))
 
@@ -96,7 +98,7 @@ genHelperCommon _ _ _ _ = error "impossible,,, how I wish I had done this correc
 -- codegen :: (Identifier, Int) -> Algorithm Typed -> J.CompilationUnit
 -- codegen i = runBabel . translateAlg i
 
-data Scope = UponRequest | UponNotification | UponMessage | Init
+data Scope = UponRequest | UponNotification | UponMessage | Init | Procedure
 
 pushScope :: (Scope, [Identifier]) -> Babel a -> Babel a
 pushScope = local . first . (:)
@@ -114,36 +116,33 @@ registerMessage = modify . second . second . (:)
 -- | Translate algorithm given protocol identifier and protocol name
 translateAlg :: (Identifier, Int) -> Algorithm Typed -> Babel J.CompilationUnit
 translateAlg (protoName, protoId) (P (InterfaceD ts requests indications) (StateD varTypes vars) tops) = do
-  -- local (\r -> foldr (\v -> M.insert v ()) r vars) do -- add vars to env
-  local (second (<> (requests, indications))) do
+  methodDecls <- forM tops translateTop
+  (reqHandlers, (subNotis, subMsgs)) <- get
+  let
+      varTypes' = map translateType varTypes
+      protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] stringType [VarDecl (VarId (Ident "PROTO_NAME")) (Just $ InitExp $ Lit $ String protoName)]
+                        , MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident "PROTO_ID")) (Just $ InitExp $ Lit $ Int $ toInteger protoId)]
+                        ] 
+      fieldDecls = map (\(v, t) -> MemberDecl $ FieldDecl [Private] t [VarDecl (VarId (Ident v)) Nothing]) (zip vars varTypes')
+      constructor = MemberDecl $ ConstructorDecl [Public] [] (Ident protoName) [] [ClassRefType $ ClassType [(Ident "HandlerRegistrationException", [])]] $ ConstructorBody (Just $ SuperInvoke [] [ExpName $ Name $ [Ident "PROTO_NAME"], ExpName $ Name $ [Ident "PROTO_ID"]]) registers
+                    -- Requests
+      registers   = map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "registerRequestHandler"])   [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "REQUEST_ID"),      MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) reqHandlers
 
-    methodDecls <- forM tops translateTop
-    (reqHandlers, (subNotis, subMsgs)) <- get
-    let
-        varTypes' = map translateType varTypes
-        protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] stringType [VarDecl (VarId (Ident "PROTO_NAME")) (Just $ InitExp $ Lit $ String protoName)]
-                          , MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident "PROTO_ID")) (Just $ InitExp $ Lit $ Int $ toInteger protoId)]
-                          ] 
-        fieldDecls = map (\(v, t) -> MemberDecl $ FieldDecl [Private] t [VarDecl (VarId (Ident v)) Nothing]) (zip vars varTypes')
-        constructor = MemberDecl $ ConstructorDecl [Public] [] (Ident protoName) [] [ClassRefType $ ClassType [(Ident "HandlerRegistrationException", [])]] $ ConstructorBody (Just $ SuperInvoke [] [ExpName $ Name $ [Ident "PROTO_NAME"], ExpName $ Name $ [Ident "PROTO_ID"]]) registers
-                      -- Requests
-        registers   = map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "registerRequestHandler"])   [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "REQUEST_ID"),      MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) reqHandlers
+                     -- Notifications
+                  <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "subscribeNotification"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subNotis
 
-                       -- Notifications
-                    <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "subscribeNotification"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subNotis
-
-                       -- Messages
-                       -- TODO: If we only receive messages, then we don't create the channel, and can only set it up after having a channel... how? if we do send then we should create the channel? or just take a placeholder for a channel?
-                    -- <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "registerMessageSerializer"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subMsgs
-                    -- <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "subscribeNotification"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subMsgs
-                     
-        classBody   = ClassBody $ protoFieldDecls <> fieldDecls <> [constructor] <> methodDecls
-    pure $ CompilationUnit Nothing [ImportDecl False (Name [Ident "java", Ident "util", Ident "*"]) False, ImportDecl False (Name [Ident "pt", Ident "unl", Ident "fct", Ident "di", Ident "novasys", Ident "babel", Ident "*"]) False]
-                                   [ClassTypeDecl $ ClassDecl [Public] (Ident protoName) [] (Just $ ClassRefType $ ClassType [(Ident "GenericProtocol", [])]) [] classBody]
+                     -- Messages
+                     -- TODO: If we only receive messages, then we don't create the channel, and can only set it up after having a channel... how? if we do send then we should create the channel? or just take a placeholder for a channel?
+                  -- <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "registerMessageSerializer"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subMsgs
+                  -- <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "subscribeNotification"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subMsgs
+                   
+      classBody   = ClassBody $ protoFieldDecls <> fieldDecls <> [constructor] <> methodDecls
+  pure $ CompilationUnit Nothing [ImportDecl False (Name [Ident "java", Ident "util", Ident "*"]) False, ImportDecl False (Name [Ident "pt", Ident "unl", Ident "fct", Ident "di", Ident "novasys", Ident "babel", Ident "*"]) False]
+                                 [ClassTypeDecl $ ClassDecl [Public] (Ident protoName) [] (Just $ ClassRefType $ ClassType [(Ident "GenericProtocol", [])]) [] classBody]
 
 translateTop :: TopDecl Typed -> Babel Decl
 translateTop top = do
-  requests <- asks (fmap (\(FLDecl n _) -> n) . fst . snd)
+  (requests, indications) <- asks (bimap (fmap (\(FLDecl n _) -> n)) (fmap (\(FLDecl n _) -> n)) . snd)
   case top of
     UponReceiveD argTypes messageType (map argName -> args) stmts -> do
       let argTypes' = map translateType argTypes
@@ -159,6 +158,11 @@ translateTop top = do
                                                                                                          ] [] Nothing (MethodBody $ Just $ Block bodyStmts)
         _ -> error "Incorrect args for Receive. Excepting Receive(MessageType, src, args...)"
 
+    ProcedureD argTypes (FLDecl name (map argName -> args)) stmts -> do
+      let argTypes' = map translateType argTypes
+      bodyStmts <- pushScope (Procedure, args) $ mapM translateStmt stmts
+      pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident name) (map (\(a, t) -> FormalParam [] t False (VarId (Ident a))) (zip args argTypes')) [] Nothing (MethodBody $ Just $ Block bodyStmts)
+
     UponD argTypes (FLDecl name (map argName -> args)) stmts -> do
       let argTypes' = map translateType argTypes
       case name of
@@ -168,17 +172,16 @@ translateTop top = do
            pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident "init") (map (\(a, t) -> FormalParam [] t False (VarId (Ident a))) (zip args argTypes')) [] Nothing (MethodBody $ Just $ Block bodyStmts)
 
         | name `elem` requests -> do
-            registerRequestHandler name
-            makeRequest name args argTypes'
             bodyStmts <- pushScope (UponRequest, args) $ mapM translateStmt stmts
+            registerRequestHandler name
             pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident ("upon" <> upperFirst name)) [ FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident $ upperFirst name, [])]) False (VarId (Ident "request"))
                                                                                                     , FormalParam [] (PrimType ShortT) False (VarId (Ident "sourceProto")) ] [] Nothing (MethodBody $ Just $ Block bodyStmts)
-        | otherwise -> do
-            makeNotification name args argTypes' -- TODO: and then put it in the correct place depending on where its triggered from
-            subscribeNotification name
+        | name `elem` indications -> do
             bodyStmts <- pushScope (UponNotification, args) $ mapM translateStmt stmts
+            subscribeNotification name
             pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident ("upon" <> upperFirst name)) [ FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident $ upperFirst name, [])]) False (VarId (Ident "notification"))
                                                                                                     , FormalParam [] (PrimType ShortT) False (VarId (Ident "sourceProto")) ] [] Nothing (MethodBody $ Just $ Block bodyStmts)
+        | otherwise -> error $ "Unknown upon event " <> show name
 
 
 translateStmt :: Statement Typed -> Babel BlockStmt
@@ -209,13 +212,19 @@ translateStmt = fmap BlockStmt . para \case
         _ -> error "impossible :)  can't send without the correct parameters"
 
 
+  CallF (FLCall name args) -> do
+    argsExps <- mapM translateExp args
+    pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident name]) argsExps
+
   TriggerF (FLCall name args) -> do
     (requests, indications) <- asks (bimap (map (\(FLDecl n _) -> n)) (map (\(FLDecl n _) -> n)) . snd)
     argsExps <- mapM translateExp args
     case name of
      _| name `elem` requests -> do
         -- Is a request on other protocol?
-        pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendRequest"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, Lit $ String "TODO"]
+        pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendRequest"])
+                [ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing
+                , Lit $ String "TODO"]
 
       | name `elem` indications -> do
         pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "triggerNotification"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing]
@@ -311,6 +320,7 @@ translateIdentifier i = asks fst >>= pure . trId'
                       UponNotification -> MethodInv $ PrimaryMethodCall (ExpName $ Name [Ident "notification"]) [] (Ident $ "get" <> upperFirst i) []
                       UponMessage -> MethodInv $ PrimaryMethodCall (ExpName $ Name [Ident "msg"]) [] (Ident $ "get" <> upperFirst i) []
                       Init -> ExpName $ Name [Ident i]
+                      Procedure -> ExpName $ Name [Ident i]
 
 translateType :: AType -> Type
 translateType = cata \case
@@ -329,14 +339,6 @@ translateType = cata \case
   TVoidFunF _ -> error "Fun type"
   TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
   TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
-
-makeRequest :: Identifier -> [Identifier] -> [Type] -> Babel ()
-makeRequest i ids tys = do
-  pure ()
-
-makeNotification :: Identifier -> [Identifier] -> [Type] -> Babel ()
-makeNotification i ids tys = do
-  pure ()
 
 makeMessage :: Identifier -> [Identifier] -> [Type] -> Babel ()
 makeMessage i ids tys = do

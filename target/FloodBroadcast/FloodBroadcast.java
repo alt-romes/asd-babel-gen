@@ -12,9 +12,9 @@ public class FloodBroadcast extends GenericProtocol
   {
     super(PROTO_NAME, PROTO_ID);
     registerRequestHandler(BroadcastRequest.REQUEST_ID, this :: uponBroadcastRequest);
+    subscribeNotification(ChannelCreated.NOTIFICATION_ID, this :: uponChannelCreated);
     subscribeNotification(NeighbourDown.NOTIFICATION_ID, this :: uponNeighbourDown);
     subscribeNotification(NeighbourUp.NOTIFICATION_ID, this :: uponNeighbourUp);
-    subscribeNotification(ChannelCreated.NOTIFICATION_ID, this :: uponChannelCreated);
   }
   private void init (Host self)
   {
@@ -23,27 +23,27 @@ public class FloodBroadcast extends GenericProtocol
     received = new HashSet<UUID>();
     channelReady = false;
   }
-  private void uponChannelCreated (ChannelCreated notification, short sourceProto)
-  {
-    channelReady = true;
-  }
   private void uponBroadcastRequest (BroadcastRequest request, short sourceProto)
   {
     if (channelReady)
     {
-      sendMsg(new FloodMessage(request.getMid(), request.getS(), request.getM()), myself);
+      processFloodMessage(myself, request.getMid(), request.getS(), request.getM());
     }
   }
   private void uponFloodMessage (FloodMessage msg, Host from, short sourceProto)
   {
-    if (!received.contains(msg.getMid()))
+    processFloodMessage(from, msg.getMid(), msg.getS(), msg.getM());
+  }
+  private void processFloodMessage (Host from, UUID mid, Host s, byte[] m)
+  {
+    if (!received.contains(mid))
     {
-      received.add(msg.getMid());
-      triggerNotification(new DeliverNotification(msg.getMid(), msg.getS(), msg.getM()));
+      received.add(mid);
+      triggerNotification(new DeliverNotification(mid, s, m));
       for (Host host : neighbours) {
                                      if (!host.equals(from))
                                      {
-                                       sendMsg(new FloodMessage(msg.getMid(), msg.getS(), msg.getM()), host);
+                                       sendMsg(new FloodMessage(mid, s, m), host);
                                      }
                                    }
     }
@@ -59,5 +59,9 @@ public class FloodBroadcast extends GenericProtocol
     for (Host h : notification.getDownNeighbours()) {
                                                       neighbours.remove(h);
                                                     }
+  }
+  private void uponChannelCreated (ChannelCreated notification, short sourceProto)
+  {
+    channelReady = true;
   }
 }

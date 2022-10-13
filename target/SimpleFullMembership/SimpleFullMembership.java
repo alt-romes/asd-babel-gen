@@ -11,7 +11,6 @@ public class SimpleFullMembership extends GenericProtocol
   public SimpleFullMembership () throws HandlerRegistrationException
   {
     super(PROTO_NAME, PROTO_ID);
-    subscribeNotification(ChannelClosed.NOTIFICATION_ID, this :: uponChannelClosed);
   }
   private void init (Unknown15 myself, Unknown16 ssSize, Unknown17 t, Host contact)
   {
@@ -33,13 +32,5 @@ public class SimpleFullMembership extends GenericProtocol
                                        triggerNotification(new NeighbourUp(new HashSet<Host>(Arrays.asList(p))));
                                      }
                                    }
-  }
-  private void uponChannelClosed (ChannelClosed notification, short sourceProto)
-  {
-    if (membership.contains(notification.getP()))
-    {
-      membership.remove(notification.getP());
-      triggerNotification(new NeighbourDown(new HashSet<Host>(Arrays.asList(notification.getP()))));
-    }
   }
 }

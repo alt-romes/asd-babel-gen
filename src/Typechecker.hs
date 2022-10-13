@@ -90,6 +90,7 @@ inferAlg (P i (StateD _ vars) tops) = do
       topIdent = \case
         UponD _ (FLDecl n _) _ -> n
         UponReceiveD _ n _ _   -> n
+        ProcedureD _ (FLDecl n _) _ -> n
 
 inferInterface :: InterfaceD Parsed -> Infer (InterfaceD Typed)
 inferInterface (InterfaceD () reqs inds) = do
@@ -110,12 +111,23 @@ inferTop = \case
       pure (UponReceiveD argsTypes name args stmtsT)
 
   UponD _ (FLDecl name args) stmts -> do
-      freshTVars <- mapM (\(Arg _ t) -> maybe (TVar <$> fresh) pure t) args
-      stmtsT <- pushScope (zipWith (\(Arg n _) t -> (n,t)) args freshTVars) $ mapM inferStmt stmts
+      newScope <- mapM (\(Arg n t) -> (n,) <$> maybe (TVar <$> fresh) pure t) args
+      let argsTypes = map snd newScope
+      stmtsT <- pushScope newScope $ mapM inferStmt stmts
       findInEnv name >>= \case
         Nothing -> error $ "Not in scope" <> name
-        Just funT -> constraint funT (TVoidFun freshTVars)
-      pure (UponD freshTVars (FLDecl name args) stmtsT)
+        Just funT -> constraint funT (TVoidFun argsTypes)
+      pure (UponD argsTypes (FLDecl name args) stmtsT)
+
+  ProcedureD _ (FLDecl name args) stmts -> do
+      newScope <- mapM (\(Arg n t) -> (n,) <$> maybe (TVar <$> fresh) pure t) args
+      let argsTypes = map snd newScope
+      stmtsT <- pushScope newScope $ mapM inferStmt stmts
+      findInEnv name >>= \case
+        Nothing -> error $ "Procedure not in scope" <> name
+        Just funT -> constraint funT (TVoidFun argsTypes)
+      pure (ProcedureD argsTypes (FLDecl name args) stmtsT)
+
 
 inferStmt :: Statement Parsed -> Infer (Statement Typed)
 inferStmt = cata \case
@@ -141,12 +153,9 @@ inferStmt = cata \case
         Just funT -> constraint funT (TVoidFun argTys)
       pure (TriggerSend name args')
 
-  TriggerF (FLCall name args) -> do
-      (argTys, args') <- unzip <$> mapM inferExp args
-      findInEnv name >>= \case
-        Nothing -> pure () -- If name isn't found it is a notification and don't add any extra constraint
-        Just funT -> constraint funT (TVoidFun argTys)
-      pure (Trigger (FLCall name args'))
+  TriggerF flCall -> Trigger <$> inferFLCall flCall
+
+  CallF flCall -> Call <$> inferFLCall flCall
 
   ForeachF _ name e body -> do
     nt <- TVar <$> fresh
@@ -154,6 +163,14 @@ inferStmt = cata \case
     constraint t (TSet nt)
     bodyT <- pushScope [(name, nt)] $ sequence body
     pure (Foreach nt name e' bodyT)
+
+inferFLCall :: FLCall Parsed -> Infer (FLCall Typed)
+inferFLCall (FLCall name args) = do
+  (argTys, args') <- unzip <$> mapM inferExp args
+  findInEnv name >>= \case
+    Nothing -> pure () -- If name isn't found it is a notification and don't add any extra constraint
+    Just funT -> constraint funT (TVoidFun argTys)
+  pure (FLCall name args')
 
 
 inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
@@ -335,23 +352,31 @@ instance Substitutable (TopDecl Typed) where
   applySubst s = \case
     UponD tvs fld body -> UponD (applySubst s tvs) fld (applySubst s body)
     UponReceiveD tvs i as body -> UponReceiveD (applySubst s tvs) i as (applySubst s body)
+    ProcedureD tvs fld body -> ProcedureD (applySubst s tvs) fld (applySubst s body)
   ftv = \case
     UponD tvs _ body -> ftv tvs <> ftv body
     UponReceiveD tvs _ _ body -> ftv tvs <> ftv body
+    ProcedureD tvs _ body -> ftv tvs <> ftv body
 
 instance Substitutable (Statement Typed) where
   applySubst s = cata \case
     AssignF i e -> Assign i (applySubst s e)
     IfF e thenS elseS -> If (applySubst s e) thenS elseS
     TriggerSendF i e -> TriggerSend i (applySubst s e)
-    TriggerF (FLCall i e) -> Trigger $ FLCall i (applySubst s e)
+    TriggerF flc -> Trigger $ applySubst s flc
+    CallF flc    -> Call    $ applySubst s flc
     ForeachF tv i e stmts -> Foreach (applySubst s tv) i (applySubst s e) stmts
   ftv = cata \case
     AssignF _ _ -> mempty
     IfF _ thenS elseS -> mconcat (thenS <> elseS)
-    TriggerF (FLCall _ e) -> ftv e
+    TriggerF fl -> ftv fl
+    CallF fl    -> ftv fl
     TriggerSendF _ e -> ftv e
     ForeachF tv _ _ stmts -> ftv tv <> mconcat stmts
+
+instance Substitutable (FLCall Typed) where
+  applySubst s (FLCall name args) = FLCall name $ applySubst s args
+  ftv (FLCall _ args) = ftv args
 
 instance Substitutable (Expr Typed) where
   applySubst s = cata \case

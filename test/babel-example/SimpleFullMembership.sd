@@ -2,8 +2,10 @@ Interface:
     Requests:
 
     Indications:
+        channelCreated(channelId)
         neighbourUp(upNeighbours)
         neighbourDown(downNeighbours)
+
 
 State:
     self // identifier of self
@@ -26,10 +28,10 @@ Upon Receive(SampleMessage, s, sample) do:
             membership <- membership U {p}
             Trigger neighbourUp({p})
 
-Upon ChannelClosed(p) do:
-    if p in membership then
-        membership <- membership \ {p}
-        Trigger neighbourDown({p})
+// Upon ChannelClosed(p) do:
+//     if p in membership then
+//         membership <- membership \ {p}
+//         Trigger neighbourDown({p})
 
 // Upon Timer SampleTimer do:
 //     If #membership >= 1 then:

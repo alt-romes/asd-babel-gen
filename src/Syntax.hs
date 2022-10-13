@@ -60,7 +60,7 @@ data Arg = Arg { argName :: Identifier, argType :: Maybe AType }
 data TopDecl p
  = UponD (XUponD p) FLDecl [Statement p]
  | UponReceiveD (XUponReceiveD p) Identifier [Arg] [Statement p]
- -- | ProcedureD Expr
+ | ProcedureD (XProcedureD p) FLDecl [Statement p]
  -- | MessagesD  --
  -- | TimersD    --
 
@@ -69,6 +69,7 @@ data Statement p
   | If (Expr p) [Statement p] [Statement p]
   | TriggerSend Identifier [Expr p]
   | Trigger (FLCall p)
+  | Call    (FLCall p)
   | Foreach (XForeach p) Identifier (Expr p) [Statement p]
 
 data Expr p
@@ -105,7 +106,8 @@ data Typed
 -- Trees that Grow
 type family XStateD  p
 type family XUponD   p
-type family XUponReceiveD   p
+type family XUponReceiveD p
+type family XProcedureD  p
 type family XForeach p
 type family XSet p
 type family XMap p
@@ -120,6 +122,8 @@ type instance XUponD   Parsed = ()
 type instance XUponD   Typed  = [AType]
 type instance XUponReceiveD Parsed = ()
 type instance XUponReceiveD Typed = [AType]
+type instance XProcedureD Parsed = ()
+type instance XProcedureD Typed = [AType]
 type instance XForeach Parsed = ()
 type instance XForeach Typed  = AType
 type instance XSet Parsed = ()

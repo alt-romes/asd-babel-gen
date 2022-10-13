@@ -1,13 +1,13 @@
 {-# LANGUAGE BlockArguments #-}
 module ASD where
 
-import Parser
-import Typechecker
-import Codegen
+-- import Parser
+-- import Typechecker
+-- import Codegen
 
-import Text.Megaparsec
+-- import Text.Megaparsec
 
-import qualified Language.Java.Pretty as J
+-- import qualified Language.Java.Pretty as J
 
 -- testBabelProto :: FilePath -> IO ()
 -- testBabelProto fp = do

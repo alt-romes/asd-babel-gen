@@ -3,16 +3,11 @@
 module Main where
 
 import Data.Function
-import Data.Either
-import Data.Bifunctor
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import Data.Text.Encoding
 
 import Control.Monad
-import Control.Category ((>>>))
 
-import Control.Exception
 import System.Environment
 import System.OsPath
 import System.Directory.OsPath
@@ -20,7 +15,6 @@ import qualified System.File.OsPath as F
 import qualified System.Directory as UD
 import qualified System.FilePath as UF
 
-import Syntax
 import Parser
 import Typechecker
 import Codegen

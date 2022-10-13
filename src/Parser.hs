@@ -56,13 +56,18 @@ pStateD = indentBlock do
 
 pTopDecl :: Parser (TopDecl Parsed)
 pTopDecl = choice
-  [ try uponReceiveD
+  [ uponReceiveD
   , uponD
+  , procedureD
   ]
 
   where
+    procedureD = indentBlock do
+      fld <- symbol' "procedure" *> pFLDecl <* symbol "do" <* optional (symbol ":")
+      pure $ L.IndentMany Nothing (pure . ProcedureD @Parsed () fld) pStatement
+
     uponReceiveD = indentBlock do
-      (i,as) <- symbol' "upon" *> symbol' "receive" *> parens ((,) <$> identifier <* symbol "," <*> args) <* symbol "do" <* optional (symbol ":")
+      (i,as) <- try (symbol' "upon" *> symbol' "receive") *> parens ((,) <$> identifier <* symbol "," <*> args) <* symbol "do" <* optional (symbol ":")
       pure $ L.IndentMany Nothing (pure . UponReceiveD @Parsed () i as) pStatement
 
     uponD = indentBlock do
@@ -72,9 +77,10 @@ pTopDecl = choice
 pStatement :: Parser (Statement Parsed)
 pStatement = choice
   [ pIf
-  , try (symbol' "trigger" *> symbol' "send" $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp))
-  , symbol' "trigger" $> Trigger <*> pFLCall
   , pForeach
+  , symbol' "call" $> Call <*> pFLCall
+  , try (symbol' "trigger" *> symbol' "send") $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp)
+  , symbol' "trigger" $> Trigger <*> pFLCall
   , Assign <$> identifier <* symbol "<-" <*> pExp
   ]
   where

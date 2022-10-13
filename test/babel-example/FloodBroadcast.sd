@@ -16,21 +16,21 @@ Upon Init(self) do:
   received   <- {}
   channelReady <- false
 
-Upon ChannelCreated() do:
-  // We should register our own callbacks and serializers, only then,
-  channelReady <- true
-
 Upon broadcastRequest(mid, s, m) do:
   If channelReady Then
-    Trigger Send(FloodMessage, myself, mid, s, m)
+    Call processFloodMessage(myself, mid, s, m)
 
 Upon Receive(FloodMessage, from, mid, s, m) do:
+  Call processFloodMessage(from, mid, s, m)
+
+Procedure processFloodMessage(from, mid, s, m) do
   If mid ∉ received Then
     received <- received U {mid}
     Trigger deliverNotification(mid, s, m)
     Foreach host ∈ neighbours do:
-      If host /= from Then
+      if host /= from then
         Trigger Send(FloodMessage, host, mid, s, m)
+  
 
 Upon neighbourUp(upNeighbours) do:
   Foreach h ∈ upNeighbours do:
@@ -41,3 +41,6 @@ Upon neighbourDown(downNeighbours) do:
     neighbours <- neighbours \ {h}
 
 
+Upon channelCreated(channelId) do:
+  // We should register our own callbacks and serializers, only then,
+  channelReady <- true
