@@ -97,6 +97,8 @@ data BOp
   | LE
   | LT
   | GT
+  | AND
+  | OR
   deriving Show
 
 data AType

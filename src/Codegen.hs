@@ -10,8 +10,6 @@ module Codegen where
 -- TODO: Really, we should only do this after passing through an initial desugaring phase into another intermediate representation which is then typechecked.
 -- Since it doesn't really matter in the long term, I'll just accept this mess
 
-import Debug.Trace
-
 import qualified Data.Char as C
 import qualified Data.List as L
 import qualified Data.Map as M
@@ -31,7 +29,7 @@ import Typechecker (expType)
 
 type Env = M.Map Identifier ()
 type Babel = RWS ([(Scope, [Identifier])], ([Request], [Indication])) () -- Reader: (Scope, (Requests, Indications))
-                 ([Identifier], ([Identifier], [Identifier])) -- State: (Request Handlers, Notification Subscriptions, Messages watched)
+                 ([Identifier], [Identifier], [Identifier], [Identifier]) -- State: (Request Handlers, Notification Subscriptions, Messages, Timers)
 
 type Indication = FLDecl
 type Request    = FLDecl
@@ -106,20 +104,22 @@ pushScope :: (Scope, [Identifier]) -> Babel a -> Babel a
 pushScope = local . first . (:)
 
 registerRequestHandler :: Identifier -> Babel ()
-registerRequestHandler = modify . first . (:)
+registerRequestHandler x = modify (\(r,n,m,t) -> (x:r,n,m,t))
 
 subscribeNotification :: Identifier -> Babel ()
-subscribeNotification = modify . second . first . (:)
+subscribeNotification x = modify (\(r,n,m,t) -> (r,x:n,m,t))
 
 registerMessage :: Identifier -> Babel ()
-registerMessage = modify . second . second . (:)
+registerMessage x = modify (\(r,n,m,t) -> (r,n,x:m,t))
 
+registerTimer :: Identifier -> Babel ()
+registerTimer x = modify (\(r,n,m,t) -> (r,n,m,x:t))
 
 -- | Translate algorithm given protocol identifier and protocol name
 translateAlg :: (Identifier, Int) -> Algorithm Typed -> Babel J.CompilationUnit
 translateAlg (protoName, protoId) (P (InterfaceD _ _ _) (StateD varTypes vars) tops) = do
   methodDecls <- forM tops translateTop
-  (reqHandlers, (subNotis, subMsgs)) <- get
+  (reqHandlers, subNotis, subMsgs, subTimers) <- get
   let
       varTypes' = map translateType varTypes
       protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] stringType [VarDecl (VarId (Ident "PROTO_NAME")) (Just $ InitExp $ Lit $ String protoName)]
@@ -137,6 +137,9 @@ translateAlg (protoName, protoId) (P (InterfaceD _ _ _) (StateD varTypes vars) t
                      -- TODO: If we only receive messages, then we don't create the channel, and can only set it up after having a channel... how? if we do send then we should create the channel? or just take a placeholder for a channel?
                   -- <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "registerMessageSerializer"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subMsgs
                   -- <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "subscribeNotification"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "NOTIFICATION_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subMsgs
+
+                     -- Timers
+                  <> map (\i -> BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "registerTimerHandler"]) [FieldAccess $ ClassFieldAccess (Name [Ident $ upperFirst i]) (Ident "TIMER_ID"), MethodRef (Name [Ident "this"]) (Ident $ "upon" <> upperFirst i)]) subTimers
                    
       classBody   = ClassBody $ protoFieldDecls <> fieldDecls <> [constructor] <> methodDecls
   pure $ CompilationUnit Nothing [ImportDecl False (Name [Ident "java", Ident "util", Ident "*"]) False, ImportDecl False (Name [Ident "pt", Ident "unl", Ident "fct", Ident "di", Ident "novasys", Ident "babel", Ident "*"]) False]
@@ -167,6 +170,9 @@ translateTop top = do
 
     UponTimerD argTypes (FLDecl name (map argName -> args)) stmts -> do
       bodyStmts <- pushScope (UponTimer, args) $ mapM translateStmt stmts
+      registerTimer name
+      let argTypes' = map translateType argTypes
+      makeTimer name args argTypes'
       pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident ("upon" <> upperFirst name)) [ FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident $ upperFirst name, [])]) False (VarId (Ident "timer"))
                                                                                               , FormalParam [] (PrimType ShortT) False (VarId (Ident "timerId")) ] [] Nothing (MethodBody $ Just $ Block bodyStmts)
 
@@ -298,6 +304,8 @@ translateExp = para \case
       Syntax.GE -> pure $ BinOp e1' GThanE e2'
       Syntax.LT -> pure $ BinOp e1' LThan e2'
       Syntax.GT -> pure $ BinOp e1' GThan e2'
+      Syntax.AND -> pure $ BinOp e1' And e2'
+      Syntax.OR  -> pure $ BinOp e1' Or e2'
   SetF t (unzip -> (_, ss)) -> case translateType t of
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of
@@ -374,6 +382,10 @@ translateType = cata \case
 
 makeMessage :: Identifier -> [Identifier] -> [Type] -> Babel ()
 makeMessage i ids tys = do
+  pure ()
+
+makeTimer :: Identifier -> [Identifier] -> [Type] -> Babel ()
+makeTimer i ids tys = do
   pure ()
 
 stringType :: Type

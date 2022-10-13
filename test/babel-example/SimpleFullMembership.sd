@@ -9,35 +9,46 @@ Interface:
 
 State:
     self // identifier of self
-    membership // set with all neighbours
+    membership // peers I am connected to
+    pending // peers I am trying to connect to
     subsetSize // number of neighbours to send to other
     tau          // period between anouncements
 
 Upon Init(myself, ssSize, t, contact) do:
+
     self <- myself
     membership <- {}
-    if contact /= ⊥ then
-        membership <- membership U {contact}
+    pending <- {}
     subsetSize <- ssSize
     tau <- t
+
+    Trigger channelCreated(0)
+
+    if contact /= ⊥ then
+        pending <- pending U {contact}
+        // TODO openConnection(contact)
+
     Setup Periodic Timer SampleTimer(tau)
-
-Upon Timer SampleTimer() do:
-    If #membership >= 1 then:
-        target <- Call random(membership)
-        sample <- {self}
-        sample <- Call random2(subsetSize, membership \ {target})
-        Trigger Send(SampleMessage, target, sample)
-
 
 Upon Receive(SampleMessage, s, sample) do:
     Foreach p ∈ sample do:
-        If p ∉ membership then
-            membership <- membership U {p}
-            Trigger neighbourUp({p})
+        If p /= self ∧ p ∉ membership ∧ p ∉ pending then
+            pending <- pending U {p}
+            // openConnection(p)
+            // Trigger neighbourUp({p})
+
+Upon Timer SampleTimer() do:
+    If #membership >= 1 then:
+        target <- Call getRandom(membership)
+        sample <- Call getRandomSubsetExcluding(subsetSize, membership, target)
+        sample <- sample U {self}
+        Trigger Send(SampleMessage, target, sample)
 
 // Upon ChannelClosed(p) do:
 //     if p in membership then
 //         membership <- membership \ {p}
 //         Trigger neighbourDown({p})
 
+
+Procedure getRandom(ms) do:
+Procedure getRandomSubsetExcluding(ms, ss, t) do:

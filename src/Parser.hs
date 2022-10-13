@@ -132,6 +132,9 @@ pExp = makeExprParser
     , binary "<" (BOp Syntax.LT)
     , binary ">" (BOp Syntax.GT)
     ]
+  , [ InfixL (BOp AND <$ (symbol "∧" <|> symbol' "and"))
+    , InfixL (BOp OR  <$ (symbol "∨" <|> symbol' "or"))
+    ]
   ]
 
 

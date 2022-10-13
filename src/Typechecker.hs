@@ -245,6 +245,8 @@ inferExp = cata \case
       Syntax.GE -> constraint t1 TInt <* constraint t2 TInt
       Syntax.LT -> constraint t1 TInt <* constraint t2 TInt
       Syntax.GT -> constraint t1 TInt <* constraint t2 TInt
+      Syntax.AND -> constraint t1 TBool <* constraint t2 TBool
+      Syntax.OR  -> constraint t1 TBool <* constraint t2 TBool
     pure (TBool, BOp bop e1' e2')
   SetF _ s -> do
     s' <- sequence s

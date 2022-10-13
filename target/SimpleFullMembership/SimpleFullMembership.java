@@ -4,44 +4,53 @@ public class SimpleFullMembership extends GenericProtocol
 {
   public final String PROTO_NAME = "SimpleFullMembership";
   public final short PROTO_ID = 100;
-  private Host self;
-  private Set<Host> membership;
-  private Unknown17 subsetSize;
+  private Unknown27 self;
+  private Set<Unknown27> membership;
+  private Set<Unknown27> pending;
+  private Unknown32 subsetSize;
   private int tau;
   public SimpleFullMembership () throws HandlerRegistrationException
   {
     super(PROTO_NAME, PROTO_ID);
+    registerTimerHandler(SampleTimer.TIMER_ID, this :: uponSampleTimer);
   }
-  private void init (Host myself, Unknown17 ssSize, int t, Host contact)
+  private void init (Unknown27 myself, Unknown32 ssSize, int t, Unknown27 contact)
   {
     self = myself;
-    membership = new HashSet<Host>();
-    if (contact != null)
-    {
-      membership.add(contact);
-    }
+    membership = new HashSet<Unknown27>();
+    pending = new HashSet<Unknown27>();
     subsetSize = ssSize;
     tau = t;
+    triggerNotification(new ChannelCreated(0));
+    if (contact != null)
+    {
+      pending.add(contact);
+    }
     setupPeriodicTimer(new SampleTimer(), tau, tau);
+  }
+  private void uponSampleMessage (SampleMessage msg, Host s, short sourceProto)
+  {
+    for (Unknown27 p : msg.getSample()) {
+                                          if (!p.equals(self) & !membership.contains(p) & !pending.contains(p))
+                                          {
+                                            pending.add(p);
+                                          }
+                                        }
   }
   private void uponSampleTimer (SampleTimer timer, short timerId)
   {
     if (membership.size() >= 1)
     {
-      Host target = random(membership);
-      Set<Host> sample = new HashSet<Host>(Arrays.asList(self));
-      sample = random2(subsetSize, membership.remove(target));
+      Host target = getRandom(membership);
+      Set<Unknown27> sample = getRandomSubsetExcluding(subsetSize, membership, target);
+      sample.add(self);
       sendMsg(new SampleMessage(sample), target);
     }
   }
-  private void uponSampleMessage (SampleMessage msg, Host s, short sourceProto)
+  private void getRandom (Set<Unknown27> ms)
   {
-    for (Host p : msg.getSample()) {
-                                     if (!membership.contains(p))
-                                     {
-                                       membership.add(p);
-                                       triggerNotification(new NeighbourUp(new HashSet<Host>(Arrays.asList(p))));
-                                     }
-                                   }
+  }
+  private void getRandomSubsetExcluding (Unknown32 ms, Set<Unknown27> ss, Host t)
+  {
   }
 }
