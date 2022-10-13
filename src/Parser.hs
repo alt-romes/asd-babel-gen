@@ -85,10 +85,10 @@ pStatement = choice
   , pForeach
   , try (symbol' "setup" *> symbol' "periodic") *> symbol' "timer" $> uncurry . SetupPeriodicTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
   , symbol' "setup" *> symbol' "timer" $> uncurry . SetupTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
-  , symbol' "call" $> Call <*> pFLCall
   , try (symbol' "trigger" *> symbol' "send") $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp)
   , symbol' "trigger" $> Trigger <*> pFLCall
-  , Assign <$> identifier <* symbol "<-" <*> pExp
+  , try $ Assign () <$> identifier <* symbol "<-" <*> pExp
+  , ExprStatement <$> pExp
   ]
   where
     pIf :: Parser (Statement Parsed)
@@ -114,16 +114,24 @@ pExp = makeExprParser
           , Bottom <$  (symbol "⊥" <|> symbol' "null")
           , Set () <$> (symbol' "{" *> (many pExp <* optional (symbol ",")) <* symbol' "}")
           -- , Map () <$> TODO
+          , Call () <$> (symbol' "call" *> pFLCall)
           , Id () <$> identifier
           ])
-  [ [ binary "U" (Union ())
+  [ [ Prefix (SizeOf <$ symbol "#")
+    ]
+  , [ binary "U" (Union ())
     , binary "\\" (Difference ())
     ]
   , [ InfixL (In <$ (symbol "∈" <|> symbol' "in"))
     , InfixL (NotIn <$ (symbol "∉" <|> (symbol' "not" <* symbol' "in")))
     ]
-  , [ binary "=" Eq
-    , binary "/=" NotEq ]
+  , [ binary "=" (BOp Syntax.EQ)
+    , binary "/=" (BOp NE)
+    , binary ">=" (BOp GE)
+    , binary "<=" (BOp LE)
+    , binary "<" (BOp Syntax.LT)
+    , binary ">" (BOp Syntax.GT)
+    ]
   ]
 
 

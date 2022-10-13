@@ -4,15 +4,15 @@ public class SimpleFullMembership extends GenericProtocol
 {
   public final String PROTO_NAME = "SimpleFullMembership";
   public final short PROTO_ID = 100;
-  private Unknown15 self;
+  private Host self;
   private Set<Host> membership;
-  private Unknown16 subsetSize;
-  private Unknown17 tau;
+  private Unknown17 subsetSize;
+  private int tau;
   public SimpleFullMembership () throws HandlerRegistrationException
   {
     super(PROTO_NAME, PROTO_ID);
   }
-  private void init (Unknown15 myself, Unknown16 ssSize, Unknown17 t, Host contact)
+  private void init (Host myself, Unknown17 ssSize, int t, Host contact)
   {
     self = myself;
     membership = new HashSet<Host>();
@@ -22,6 +22,17 @@ public class SimpleFullMembership extends GenericProtocol
     }
     subsetSize = ssSize;
     tau = t;
+    setupPeriodicTimer(new SampleTimer(), tau, tau);
+  }
+  private void uponSampleTimer (SampleTimer timer, short timerId)
+  {
+    if (membership.size() >= 1)
+    {
+      Host target = random(membership);
+      Set<Host> sample = new HashSet<Host>(Arrays.asList(self));
+      sample = random2(subsetSize, membership.remove(target));
+      sendMsg(new SampleMessage(sample), target);
+    }
   }
   private void uponSampleMessage (SampleMessage msg, Host s, short sourceProto)
   {

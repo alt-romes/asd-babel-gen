@@ -45,14 +45,14 @@ typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
       let (requests, indications) = bimap concat concat $ unzip $ map ((\(InterfaceD () reqs inds) -> (reqs, inds)) . interfaceD) ps
 
       reqVars <- forM requests $
-        \(FLDecl r args) -> (r,) . TVoidFun <$> mapM (\(Arg _ t) -> do
+        \(FLDecl r args) -> (r,) . (`TFun` TVoid) <$> mapM (\(Arg _ t) -> do
             v <- TVar <$> fresh
             case t of
               Nothing -> pure v
               Just t' -> constraint t' v >> pure v) args
 
       indVars <- forM indications $
-        \(FLDecl i args) -> (i,) . TVoidFun <$> mapM (\(Arg _ t) -> do
+        \(FLDecl i args) -> (i,) . (`TFun` TVoid) <$> mapM (\(Arg _ t) -> do
             v <- TVar <$> fresh
             case t of
               Nothing -> pure v
@@ -63,18 +63,20 @@ typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
 expType :: Expr Typed -> AType
 expType = cata \case
   BottomF -> TNull
+  CallF t _ -> t
   IF _ -> TInt
   BF _ -> TBool
   IdF t _ -> t
   InF _ _ -> TBool
   NotInF _ _ -> TBool
-  EqF _ _ -> TBool
-  NotEqF _ _ -> TBool
+  -- TODO: Change this BOp if we ever add any non-boolean-returning-binary-operations
+  BOpF _ _ _ -> TBool
   SetF t _ -> TSet t
   MapF _ m -> error "type map"
   UnionF t _ _ -> TSet t
     -- TODO: Only works for sets yet, but should also work for maps.
   DifferenceF t _ _ -> TSet t
+  SizeOfF _ -> TInt
     -- TODO: Only works for sets yet, but should also work for maps.
 
 inferAlg :: Algorithm Parsed -> Infer (Algorithm Typed)
@@ -105,104 +107,116 @@ inferTop = \case
   UponReceiveD _ name args stmts -> do
       freshTVarsOrTypes <- mapM (\(Arg _ t) -> maybe (TVar <$> fresh) pure t) (drop 1 args)
       let argsTypes = TClass "Host":freshTVarsOrTypes
-      stmtsT <- pushScope (zipWith (\(Arg n _) t -> (n,t)) args argsTypes) $ mapM inferStmt stmts
+      stmtsT <- pushScope (zipWith (\(Arg n _) t -> (n,t)) args argsTypes) $ inferStmts stmts
       findInEnv name >>= \case
         Nothing -> error $ "Not in scope" <> name
-        Just funT -> constraint funT (TVoidFun argsTypes)
+        Just funT -> constraint funT (TFun argsTypes TVoid)
       pure (UponReceiveD argsTypes name args stmtsT)
 
   UponD _ (FLDecl name args) stmts -> do
       newScope <- mapM (\(Arg n t) -> (n,) <$> maybe (TVar <$> fresh) pure t) args
       let argsTypes = map snd newScope
-      stmtsT <- pushScope newScope $ mapM inferStmt stmts
+      stmtsT <- pushScope newScope $ inferStmts stmts
       findInEnv name >>= \case
         Nothing -> error $ "Not in scope" <> name
-        Just funT -> constraint funT (TVoidFun argsTypes)
+        Just funT -> constraint funT (TFun argsTypes TVoid)
       pure (UponD argsTypes (FLDecl name args) stmtsT)
 
   ProcedureD _ (FLDecl name args) stmts -> do
       newScope <- mapM (\(Arg n t) -> (n,) <$> maybe (TVar <$> fresh) pure t) args
+      retTV <- TVar <$> fresh
       let argsTypes = map snd newScope
-      stmtsT <- pushScope newScope $ mapM inferStmt stmts
+      stmtsT <- pushScope newScope $ inferStmts stmts
       findInEnv name >>= \case
         Nothing -> error $ "Procedure not in scope" <> name
-        Just funT -> constraint funT (TVoidFun argsTypes)
+        Just funT -> constraint funT (TFun argsTypes retTV)
       pure (ProcedureD argsTypes (FLDecl name args) stmtsT)
 
   UponTimerD _ (FLDecl name args) stmts -> do
       newScope <- mapM (\(Arg n t) -> (n,) <$> maybe (TVar <$> fresh) pure t) args
       let argsTypes = map snd newScope
-      stmtsT <- pushScope newScope $ mapM inferStmt stmts
+      stmtsT <- pushScope newScope $ inferStmts stmts
       findInEnv name >>= \case
         Nothing -> error $ "Timer not in scope" <> name
-        Just funT -> constraint funT (TVoidFun argsTypes)
+        Just funT -> constraint funT (TFun argsTypes TVoid)
       pure (UponTimerD argsTypes (FLDecl name args) stmtsT)
 
 
-inferStmt :: Statement Parsed -> Infer (Statement Typed)
-inferStmt = cata \case
-  AssignF i e -> do
-    (t, e') <- inferExp e
-    findInEnv i >>= \case
-      Nothing -> error $ "couldn't find " <> i <> " to assign to"
-      Just it -> constraint it t
-    pure (Assign i e')
+inferStmts :: [Statement Parsed] -> Infer [Statement Typed]
+inferStmts [] = pure []
+inferStmts (stmt:stmts) = do
+  (stmtT, mit) <- inferStmt stmt
+  case mit of
+    Nothing -> (stmtT:) <$> inferStmts stmts
+    Just v -> (stmtT:) <$> pushScope [v] (inferStmts stmts)
+  where
+  inferStmt :: Statement Parsed -> Infer (Statement Typed, Maybe (Identifier, AType))
+  inferStmt = \case
+    Assign _ i e -> do
+      (t, e') <- inferExp e
+      findInEnv i >>= \case
+        Nothing -> do
+          -- we don't find this variable in scope, so we create it, and return it: this value will be used to push a scope on the next statements
+          pure (Assign (Just t) i e', Just (i, t))
+        Just it -> constraint it t >> pure (Assign Nothing i e', Nothing)
+    If e thenS elseS -> do
+      (t, e') <- inferExp e
+      constraint t TBool
+      thenS' <- inferStmts thenS
+      elseS' <- inferStmts elseS
+      pure (If e' thenS' elseS', Nothing)
+   
+    TriggerSend name args -> do
 
-  IfF e thenS elseS -> do
-    (t, e') <- inferExp e
-    constraint t TBool
-    thenS' <- sequence thenS
-    elseS' <- sequence elseS
-    pure (If e' thenS' elseS')
- 
-  TriggerSendF name args -> do
+        (argTys, args') <- unzip <$> mapM inferExp args
+        findInEnv name >>= \case
+          Nothing   -> error $ "Couldn't find " <> name <> " in Send Trigger"
+          Just funT -> constraint funT (TFun argTys TVoid)
+        pure (TriggerSend name args', Nothing)
 
+    Trigger flCall -> (,Nothing) . Trigger <$> inferFLCall TVoid flCall
+
+    SetupTimer name timer args -> do
+      (timerTy, timer') <- inferExp timer
       (argTys, args') <- unzip <$> mapM inferExp args
+      constraint timerTy TInt -- timer first param == int
       findInEnv name >>= \case
-        Nothing   -> error $ "Couldn't find " <> name <> " in Send Trigger"
-        Just funT -> constraint funT (TVoidFun argTys)
-      pure (TriggerSend name args')
+        Nothing -> pure ()
+        Just funT -> constraint funT (TFun argTys TVoid)
+      pure (SetupPeriodicTimer name timer' args', Nothing)
 
-  TriggerF flCall -> Trigger <$> inferFLCall flCall
+    SetupPeriodicTimer name timer args -> do
+      (timerTy, timer') <- inferExp timer
+      (argTys, args') <- unzip <$> mapM inferExp args
+      constraint timerTy TInt -- timer first param == int
+      findInEnv name >>= \case
+        Nothing -> pure ()
+        Just funT -> constraint funT (TFun argTys TVoid)
+      pure (SetupPeriodicTimer name timer' args', Nothing)
 
-  CallF flCall -> Call <$> inferFLCall flCall
+    Foreach _ name e body -> do
+      nt <- TVar <$> fresh
+      (t, e') <- inferExp e
+      constraint t (TSet nt)
+      bodyT <- pushScope [(name, nt)] $ inferStmts body
+      pure (Foreach nt name e' bodyT, Nothing)
 
-  SetupTimerF name timer args -> do
-    (timerTy, timer') <- inferExp timer
-    (argTys, args') <- unzip <$> mapM inferExp args
-    constraint timerTy TInt -- timer first param == int
-    findInEnv name >>= \case
-      Nothing -> pure ()
-      Just funT -> constraint funT (TVoidFun argTys)
-    pure (SetupPeriodicTimer name timer' args')
+    ExprStatement e -> (,Nothing) . ExprStatement . snd <$> inferExp e
 
-  SetupPeriodicTimerF name timer args -> do
-    (timerTy, timer') <- inferExp timer
-    (argTys, args') <- unzip <$> mapM inferExp args
-    constraint timerTy TInt -- timer first param == int
-    findInEnv name >>= \case
-      Nothing -> pure ()
-      Just funT -> constraint funT (TVoidFun argTys)
-    pure (SetupPeriodicTimer name timer' args')
-
-  ForeachF _ name e body -> do
-    nt <- TVar <$> fresh
-    (t, e') <- inferExp e
-    constraint t (TSet nt)
-    bodyT <- pushScope [(name, nt)] $ sequence body
-    pure (Foreach nt name e' bodyT)
-
-inferFLCall :: FLCall Parsed -> Infer (FLCall Typed)
-inferFLCall (FLCall name args) = do
+inferFLCall :: AType -> FLCall Parsed -> Infer (FLCall Typed)
+inferFLCall retType (FLCall name args) = do
   (argTys, args') <- unzip <$> mapM inferExp args
   findInEnv name >>= \case
     Nothing -> pure () -- If name isn't found it is a notification and don't add any extra constraint
-    Just funT -> constraint funT (TVoidFun argTys)
+    Just funT -> constraint funT (TFun argTys retType)
   pure (FLCall name args')
 
 
 inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
 inferExp = cata \case
+  CallF _ flCall -> do
+    n <- TVar <$> fresh
+    (n,) . Call n <$> inferFLCall n flCall
   IF x -> pure (TInt, I x)
   BF x -> pure (TBool, B x)
   BottomF -> pure (TNull, Bottom)
@@ -221,16 +235,17 @@ inferExp = cata \case
     constraint t2 (TSet t1)
     pure (TBool, NotIn e1' e2')
     -- TODO: Map
-  EqF e1 e2 -> do
+  BOpF bop e1 e2 -> do
     (t1, e1') <- e1
     (t2, e2') <- e2
-    constraint t1 t2
-    pure (TBool, Eq e1' e2')
-  NotEqF e1 e2 -> do
-    (t1, e1') <- e1
-    (t2, e2') <- e2
-    constraint t1 t2
-    pure (TBool, NotEq e1' e2')
+    case bop of
+      Syntax.EQ -> constraint t1 t2
+      Syntax.NE -> constraint t1 t2
+      Syntax.LE -> constraint t1 TInt <* constraint t2 TInt
+      Syntax.GE -> constraint t1 TInt <* constraint t2 TInt
+      Syntax.LT -> constraint t1 TInt <* constraint t2 TInt
+      Syntax.GT -> constraint t1 TInt <* constraint t2 TInt
+    pure (TBool, BOp bop e1' e2')
   SetF _ s -> do
     s' <- sequence s
     case s' of
@@ -257,6 +272,12 @@ inferExp = cata \case
     constraint t1 t2
     -- TODO: Constraint to set or map
     pure (t1, Difference t1 e1' e2')
+  SizeOfF e -> do
+    (t, e') <- e
+    n <- TVar <$> fresh
+    -- TODO: Constraint to set or map
+    constraint t (TSet n)
+    pure (TInt, SizeOf e')
 
 isPrimT :: AType -> Bool
 isPrimT = \case
@@ -303,7 +324,7 @@ unifies a b = case (a, b) of
   (t, TVar v) -> v `bind` t
   (TSet t1, TSet t2) -> unifies t1 t2
   (TMap t1, TMap t2) -> unifies t1 t2
-  (TVoidFun ts1, TVoidFun ts2) -> unifyMany ts1 ts2
+  (TFun ts1 x, TFun ts2 y) -> unifies x y *> unifyMany ts1 ts2
   (t1, t2) -> if t1 == t2 then pure mempty else throwError $ UnificationFail t1 t2
 
 unifyMany :: [AType] -> [AType] -> Solver Subst
@@ -331,13 +352,14 @@ class Substitutable a where
 
 instance Substitutable AType where
   applySubst s = cata \case
+    TVoidF -> TVoid
     TIntF -> TInt
     TByteF -> TByte
     TBoolF -> TBool
     TStringF -> TString
     TSetF t -> TSet t
     TMapF t -> TMap t
-    TVoidFunF ts -> TVoidFun ts
+    TFunF ts x -> TFun ts x
     TClassF n -> TClass n
     TVarF i -> M.findWithDefault (TVar i) i s
     TNullF -> TNull
@@ -345,16 +367,21 @@ instance Substitutable AType where
 
   ftv = cata \case
     TIntF -> mempty
+    TVoidF -> mempty
     TBoolF -> mempty
     TStringF -> mempty
     TByteF -> mempty
     TArrayF t -> t
     TSetF t -> t
     TMapF t -> t
-    TVoidFunF ts -> mconcat ts
+    TFunF ts x -> mconcat ts <> x
     TClassF _ -> mempty
     TVarF i -> S.singleton i
     TNullF -> mempty
+
+instance Substitutable a => Substitutable (Maybe a) where
+  applySubst = fmap . applySubst
+  ftv = maybe mempty ftv
 
 instance Substitutable a => Substitutable [a] where
   applySubst = map . applySubst
@@ -390,23 +417,23 @@ instance Substitutable (TopDecl Typed) where
 
 instance Substitutable (Statement Typed) where
   applySubst s = cata \case
-    AssignF i e -> Assign i (applySubst s e)
+    AssignF t i e -> Assign (applySubst s t) i (applySubst s e)
     IfF e thenS elseS -> If (applySubst s e) thenS elseS
     TriggerSendF i e -> TriggerSend i (applySubst s e)
     TriggerF flc -> Trigger $ applySubst s flc
     SetupPeriodicTimerF n t args -> SetupPeriodicTimer n (applySubst s t) (applySubst s args)
     SetupTimerF n t args -> SetupPeriodicTimer n (applySubst s t) (applySubst s args)
-    CallF flc    -> Call    $ applySubst s flc
     ForeachF tv i e stmts -> Foreach (applySubst s tv) i (applySubst s e) stmts
+    ExprStatementF x -> ExprStatement (applySubst s x)
   ftv = cata \case
-    AssignF _ _ -> mempty
+    AssignF t _ _ -> ftv t
     IfF _ thenS elseS -> mconcat (thenS <> elseS)
     TriggerF fl -> ftv fl
-    CallF fl    -> ftv fl
     SetupPeriodicTimerF _ t args -> ftv t <> ftv args
     SetupTimerF _ t args -> ftv t <> ftv args
     TriggerSendF _ e -> ftv e
     ForeachF tv _ _ stmts -> ftv tv <> mconcat stmts
+    ExprStatementF x -> ftv x
 
 instance Substitutable (FLCall Typed) where
   applySubst s (FLCall name args) = FLCall name $ applySubst s args
@@ -414,28 +441,30 @@ instance Substitutable (FLCall Typed) where
 
 instance Substitutable (Expr Typed) where
   applySubst s = cata \case
+    CallF t flc -> Call (applySubst s t) $ applySubst s flc
     SetF t n -> Set (applySubst s t) n
     MapF t n -> Map (applySubst s t) n
     UnionF t e f -> Union (applySubst s t) e f
     DifferenceF t e f -> Difference (applySubst s t) e f
     InF e f -> In e f
     NotInF e f -> NotIn e f
-    EqF e f -> Eq e f
-    NotEqF e f -> NotEq e f
+    BOpF bop e f -> BOp bop e f
     IF x -> I x
     BF x -> B x
     IdF t x -> Id (applySubst s t) x
     BottomF -> Bottom
+    SizeOfF x -> SizeOf x
 
   ftv = cata \case
+    CallF t fl    -> ftv t <> ftv fl
     SetF t e -> ftv t <> mconcat e
     MapF t e -> error "Map"
     UnionF t e f -> ftv t <> e <> f
     DifferenceF t e f -> ftv t <> e <> f
     InF e f -> e <> f
     NotInF e f -> e <> f
-    EqF e f -> e <> f
-    NotEqF e f -> e <> f
+    BOpF _ e f -> e <> f
+    SizeOfF x -> x
     _ -> mempty
 
 -- Util

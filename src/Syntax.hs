@@ -64,14 +64,14 @@ data TopDecl p
  | UponTimerD (XUponTimerD p) FLDecl [Statement p]
 
 data Statement p
-  = Assign Identifier (Expr p)
+  = Assign (XAssign p) Identifier (Expr p)
   | If (Expr p) [Statement p] [Statement p]
   | TriggerSend Identifier [Expr p] -- TODO: Expr p "from" out of list of args
   | Trigger (FLCall p)
-  | Call    (FLCall p)
   | SetupPeriodicTimer Identifier (Expr p {- period -}) [Expr p]
   | SetupTimer Identifier (Expr p {- period -}) [Expr p]
   | Foreach (XForeach p) Identifier (Expr p) [Statement p]
+  | ExprStatement (Expr p)
 
 data Expr p
   = I Integer
@@ -84,16 +84,29 @@ data Expr p
   | NotIn (Expr p) (Expr p)
   | Union (XUnion p) (Expr p) (Expr p)
   | Difference (XDifference p) (Expr p) (Expr p)
-  | Eq (Expr p) (Expr p)
-  | NotEq (Expr p) (Expr p)
+  | SizeOf (Expr p) -- #received
+  | BOp BOp (Expr p) (Expr p)
+  | Call (XCall p) (FLCall p)
+
+data BOp
+  -- = In
+  -- | NotIn
+  = EQ
+  | NE
+  | GE
+  | LE
+  | LT
+  | GT
+  deriving Show
 
 data AType
-  = TInt
+  = TVoid
+  | TInt
   | TBool
   | TString
   | TSet AType
   | TMap AType
-  | TVoidFun [AType]
+  | TFun [AType] AType
   | TVar Int
   | TClass Identifier
   | TNull
@@ -117,7 +130,13 @@ type family XUnion p
 type family XDifference p
 type family XId p
 type family XInterfaceD p
+type family XCall p
+type family XAssign p
 
+type instance XAssign  Parsed = ()
+type instance XAssign  Typed  = Maybe AType -- Just Type if is a new local variable of type Type
+type instance XCall  Parsed = ()
+type instance XCall  Typed  = AType
 type instance XStateD  Parsed = ()
 type instance XStateD  Typed  = [AType]
 type instance XUponD   Parsed = ()

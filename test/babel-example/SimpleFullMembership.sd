@@ -26,8 +26,8 @@ Upon Timer SampleTimer() do:
     If #membership >= 1 then:
         target <- Call random(membership)
         sample <- {self}
-        sample <- Call random(subsetSize, membership \ {target})
-        Trigger Send(SampleMSG, target, sample)
+        sample <- Call random2(subsetSize, membership \ {target})
+        Trigger Send(SampleMessage, target, sample)
 
 
 Upon Receive(SampleMessage, s, sample) do:

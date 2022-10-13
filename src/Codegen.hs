@@ -10,6 +10,8 @@ module Codegen where
 -- TODO: Really, we should only do this after passing through an initial desugaring phase into another intermediate representation which is then typechecked.
 -- Since it doesn't really matter in the long term, I'll just accept this mess
 
+import Debug.Trace
+
 import qualified Data.Char as C
 import qualified Data.List as L
 import qualified Data.Map as M
@@ -70,7 +72,7 @@ genHelperCommon :: (FLDecl, AType)
                 -> String -- ^ Name of static identifier field
                 -> String -- ^ Name of class it should extend
                 -> J.CompilationUnit
-genHelperCommon (FLDecl name (map argName -> args), TVoidFun argTys) nid sif protoExtends = do
+genHelperCommon (FLDecl name (map argName -> args), TFun argTys TVoid) nid sif protoExtends = do
     let
         argTys' = map translateType argTys
         protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident sif)) (Just $ InitExp $ Lit $ Int $ toInteger nid)]
@@ -190,45 +192,47 @@ translateTop top = do
 
 
 translateStmt :: Statement Typed -> Babel BlockStmt
-translateStmt = fmap BlockStmt . para \case
-  AssignF i e -> do
+translateStmt = para \case
+  ExprStatementF e -> BlockStmt . ExpStmt <$> translateExp e
+  AssignF mt i e -> do
     e' <- translateExp e
-    case e of
-      -- When we're doing a union, we don't assign the call to add because it returns a boolean
-      Union {} -> pure $ ExpStmt e'
-      Difference {} -> pure $ ExpStmt e'
-      _ -> pure $ ExpStmt $ J.Assign (NameLhs $ Name [Ident i]) EqualA e'
+    case mt of
+      Nothing -> case e of
+        -- When we're doing a union, we don't assign the call to add because it returns a boolean
+        Union {} -> pure $ BlockStmt $ ExpStmt e'
+        Difference {} -> pure $ BlockStmt $ ExpStmt e'
+        _ -> pure $ BlockStmt $ ExpStmt $ J.Assign (NameLhs $ Name [Ident i]) EqualA e'
+      Just t -> case e of
+        Union {} -> error "undefined union assignment for new local variables"
+        Difference {} -> error "undefined difference assignment for new local variables"
+        _ -> pure $ LocalVars [] (translateType t) [VarDecl (VarId $ Ident i) (Just $ InitExp e')]
 
   IfF e (unzip -> (_, thenS)) (unzip -> (_, elseS)) -> do
     e' <- translateExp e
-    thenS' <- StmtBlock . Block . map BlockStmt <$> sequence thenS
+    thenS' <- StmtBlock . Block <$> sequence thenS
     case elseS of
       [] ->
-        pure $ IfThen e' thenS'
+        pure $ BlockStmt $ IfThen e' thenS'
       _  -> do
-        elseS' <- StmtBlock . Block . map BlockStmt <$> sequence elseS
-        pure $ IfThenElse e' thenS' elseS'
+        elseS' <- StmtBlock . Block <$> sequence elseS
+        pure $ BlockStmt $ IfThenElse e' thenS' elseS'
 
   TriggerSendF messageType args -> do
     argsExps <- mapM translateExp args
     case zip args argsExps of
         (_, to):(map snd -> argsExps') ->
-          pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendMsg"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst messageType,[])]) argsExps' Nothing, to]
+          pure $ BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendMsg"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst messageType,[])]) argsExps' Nothing, to]
         _ -> error "impossible :)  can't send without the correct parameters"
-
-  CallF (FLCall name args) -> do
-    argsExps <- mapM translateExp args
-    pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident name]) argsExps
 
   SetupPeriodicTimerF name timer args -> do
     timerExp <- translateExp timer
     argsExps <- mapM translateExp args
-    pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "setupPeriodicTimer"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, timerExp, timerExp]
+    pure $ BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "setupPeriodicTimer"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, timerExp, timerExp]
 
   SetupTimerF name timer args -> do
     timerExp <- translateExp timer
     argsExps <- mapM translateExp args
-    pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "setupTimer"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, BinOp timerExp Mult (Lit (Int 1000))]
+    pure $ BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "setupTimer"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, BinOp timerExp Mult (Lit (Int 1000))]
 
   TriggerF (FLCall name args) -> do
     (requests, indications) <- asks (bimap (map (\(FLDecl n _) -> n)) (map (\(FLDecl n _) -> n)) . snd)
@@ -236,12 +240,12 @@ translateStmt = fmap BlockStmt . para \case
     case name of
      _| name `elem` requests -> do
         -- Is a request on other protocol?
-        pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendRequest"])
+        pure $ BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendRequest"])
                 [ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing
                 , Lit $ String "TODO"]
 
       | name `elem` indications -> do
-        pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "triggerNotification"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing]
+        pure $ BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "triggerNotification"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing]
 
       | otherwise -> error $ "Unknown trigger " <> name
 
@@ -253,7 +257,7 @@ translateStmt = fmap BlockStmt . para \case
     e' <- translateExp e
     body' <- sequence body
     let t' = translateType t
-    pure $ EnhancedFor [] t' (Ident name) e' (StmtBlock . Block . map BlockStmt $ body')
+    pure $ BlockStmt $ EnhancedFor [] t' (Ident name) e' (StmtBlock . Block $ body')
 
 
 translateExp :: Expr Typed -> Babel Exp
@@ -270,26 +274,30 @@ translateExp = para \case
     e1' <- e1
     e2' <- e2
     pure $ PreNot $ MethodInv $ PrimaryMethodCall e2' [] (Ident "contains") [e1']
-  EqF (p1, e1) (p2, e2) -> do
+  BOpF bop (p1, e1) (p2, e2) -> do
     e1' <- e1
     e2' <- e2
-    case expType p1 of
-      TInt  -> pure $ BinOp e1' Equal e2'
-      TBool -> pure $ BinOp e1' Equal e2'
-      TNull -> pure $ BinOp e1' Equal e2'
-      _     -> case expType p2 of
-                 TNull -> pure $ BinOp e1' Equal e2'
-                 _     -> pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
-  NotEqF (p1, e1) (p2, e2) -> do
-    e1' <- e1
-    e2' <- e2
-    case expType p1 of
-      TInt  -> pure $ BinOp e1' J.NotEq e2'
-      TBool -> pure $ BinOp e1' J.NotEq e2'
-      TNull -> pure $ BinOp e1' J.NotEq e2'
-      _     -> case expType p2 of
-                 TNull -> pure $ BinOp e1' J.NotEq e2'
-                 _     -> pure $ PreNot $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
+    case bop of
+      Syntax.EQ ->
+        case expType p1 of
+          TInt  -> pure $ BinOp e1' Equal e2'
+          TBool -> pure $ BinOp e1' Equal e2'
+          TNull -> pure $ BinOp e1' Equal e2'
+          _     -> case expType p2 of
+                     TNull -> pure $ BinOp e1' Equal e2'
+                     _     -> pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
+      Syntax.NE ->
+        case expType p1 of
+          TInt  -> pure $ BinOp e1' J.NotEq e2'
+          TBool -> pure $ BinOp e1' J.NotEq e2'
+          TNull -> pure $ BinOp e1' J.NotEq e2'
+          _     -> case expType p2 of
+                     TNull -> pure $ BinOp e1' J.NotEq e2'
+                     _     -> pure $ PreNot $ MethodInv $ PrimaryMethodCall e1' [] (Ident "equals") [e2']
+      Syntax.LE -> pure $ BinOp e1' LThanE e2'
+      Syntax.GE -> pure $ BinOp e1' GThanE e2'
+      Syntax.LT -> pure $ BinOp e1' LThan e2'
+      Syntax.GT -> pure $ BinOp e1' GThan e2'
   SetF t (unzip -> (_, ss)) -> case translateType t of
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of
@@ -318,6 +326,14 @@ translateExp = para \case
       _ -> do
         e2' <- e2
         pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "removeAll") [e2']
+  SizeOfF (_, e) -> do
+    e' <- e
+    pure $ MethodInv $ PrimaryMethodCall e' [] (Ident "size") []
+
+  CallF _ (FLCall name args) -> do
+    argsExps <- mapM translateExp args
+    pure $ MethodInv $ MethodCall (Name [Ident name]) argsExps
+
 
 translateIdentifier :: Identifier -> Babel Exp
 translateIdentifier i = asks fst >>= pure . trId'
@@ -339,6 +355,7 @@ translateIdentifier i = asks fst >>= pure . trId'
 
 translateType :: AType -> Type
 translateType = cata \case
+  TVoidF -> error "void type"
   TNullF -> RefType $ ClassRefType $ ClassType []
   TIntF -> PrimType IntT
   TByteF -> PrimType ByteT
@@ -351,7 +368,7 @@ translateType = cata \case
   TMapF x -> case x of
     PrimType x' -> error $ show x' <> " is not a boxed/Object type"
     RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t])]
-  TVoidFunF _ -> error "Fun type"
+  TFunF _ _ -> error "Fun type"
   TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
   TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
 
