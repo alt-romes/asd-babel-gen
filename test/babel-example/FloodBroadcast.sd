@@ -1,8 +1,8 @@
 Interface:
   Requests:
-    broadcastRequest(mid : UUID, s, m)
+    broadcastRequest(mid : UUID, s : Host, m : byte[])
   Indications:
-    deliverNotification(mid, s, m)
+    deliverNotification(mid : UUID, s, m : byte[])
 
 State:
   myself

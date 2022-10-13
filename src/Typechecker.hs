@@ -10,7 +10,6 @@ module Typechecker where
 -- Since it doesn't really matter in the long term, I'll just accept this mess
 
 import Data.Coerce
-import qualified Data.Char as C
 import qualified Data.Set as S
 import qualified Data.Map as M
 
@@ -288,6 +287,7 @@ class Substitutable a where
 instance Substitutable AType where
   applySubst s = cata \case
     TIntF -> TInt
+    TByteF -> TByte
     TBoolF -> TBool
     TStringF -> TString
     TSetF t -> TSet t
@@ -296,11 +296,14 @@ instance Substitutable AType where
     TClassF n -> TClass n
     TVarF i -> M.findWithDefault (TVar i) i s
     TNullF -> TNull
+    TArrayF x -> TArray x
 
   ftv = cata \case
     TIntF -> mempty
     TBoolF -> mempty
     TStringF -> mempty
+    TByteF -> mempty
+    TArrayF t -> t
     TSetF t -> t
     TMapF t -> t
     TVoidFunF ts -> mconcat ts

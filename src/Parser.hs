@@ -127,9 +127,9 @@ argsExp :: Parser [Expr Parsed]
 argsExp = many (pExp <* optional (symbol ","))
 
 atype :: Parser AType
-atype = choice
-  [ TClass <$> identifier
-  ]
+atype = makeExprParser
+          (choice [TClass <$> identifier])
+          [[Postfix $ TArray <$ symbol "[" <* symbol "]"]]
 
 --- Lexing
 

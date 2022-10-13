@@ -95,6 +95,8 @@ data AType
   | TVar Int
   | TClass Identifier
   | TNull
+  | TByte
+  | TArray AType
   deriving (Show, Eq)
 
 data Parsed

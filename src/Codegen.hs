@@ -316,6 +316,8 @@ translateType :: AType -> Type
 translateType = cata \case
   TNullF -> RefType $ ClassRefType $ ClassType []
   TIntF -> PrimType IntT
+  TByteF -> PrimType ByteT
+  TArrayF t -> RefType $ ArrayType t
   TBoolF -> PrimType BooleanT
   TStringF -> stringType
   TSetF x -> case x of

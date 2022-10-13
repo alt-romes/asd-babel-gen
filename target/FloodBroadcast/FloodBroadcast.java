@@ -31,7 +31,7 @@ public class FloodBroadcast extends GenericProtocol
   {
     if (channelReady)
     {
-      sendMsg(new Myself(request.getS(), request.getM()), request.getMid());
+      sendMsg(new FloodMessage(request.getMid(), request.getS(), request.getM()), myself);
     }
   }
   private void uponFloodMessage (FloodMessage msg, Host from, short sourceProto)
@@ -43,7 +43,7 @@ public class FloodBroadcast extends GenericProtocol
       for (Host host : neighbours) {
                                      if (!host.equals(from))
                                      {
-                                       sendMsg(new Host(msg.getS(), msg.getM()), msg.getMid());
+                                       sendMsg(new FloodMessage(msg.getMid(), msg.getS(), msg.getM()), host);
                                      }
                                    }
     }

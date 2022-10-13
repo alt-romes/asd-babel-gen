@@ -4,9 +4,9 @@ public class BroadcastRequest extends ProtoRequest
 {
   public final short REQUEST_ID = 201;
   private final UUID mid;
-  private final Unknown37 s;
-  private final Unknown38 m;
-  public BroadcastRequest (UUID mid, Unknown37 s, Unknown38 m)
+  private final Host s;
+  private final byte[] m;
+  public BroadcastRequest (UUID mid, Host s, byte[] m)
   {
     super(REQUEST_ID);
     this.mid = mid;
@@ -17,11 +17,11 @@ public class BroadcastRequest extends ProtoRequest
   {
     return mid;
   }
-  public Unknown37 getS ()
+  public Host getS ()
   {
     return s;
   }
-  public Unknown38 getM ()
+  public byte[] getM ()
   {
     return m;
   }

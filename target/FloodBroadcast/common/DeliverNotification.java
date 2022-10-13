@@ -4,9 +4,9 @@ public class DeliverNotification extends ProtoNotification
 {
   public final short NOTIFICATION_ID = 202;
   private final UUID mid;
-  private final Unknown37 s;
-  private final Unknown38 m;
-  public DeliverNotification (UUID mid, Unknown37 s, Unknown38 m)
+  private final Host s;
+  private final byte[] m;
+  public DeliverNotification (UUID mid, Host s, byte[] m)
   {
     super(NOTIFICATION_ID);
     this.mid = mid;
@@ -17,11 +17,11 @@ public class DeliverNotification extends ProtoNotification
   {
     return mid;
   }
-  public Unknown37 getS ()
+  public Host getS ()
   {
     return s;
   }
-  public Unknown38 getM ()
+  public byte[] getM ()
   {
     return m;
   }
