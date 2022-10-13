@@ -57,6 +57,7 @@ pStateD = indentBlock do
 pTopDecl :: Parser (TopDecl Parsed)
 pTopDecl = choice
   [ uponReceiveD
+  , uponTimerD
   , uponD
   , procedureD
   ]
@@ -70,6 +71,10 @@ pTopDecl = choice
       (i,as) <- try (symbol' "upon" *> symbol' "receive") *> parens ((,) <$> identifier <* symbol "," <*> args) <* symbol "do" <* optional (symbol ":")
       pure $ L.IndentMany Nothing (pure . UponReceiveD @Parsed () i as) pStatement
 
+    uponTimerD = indentBlock do
+      fld <- try (symbol' "upon" *> symbol' "timer") *> pFLDecl <* symbol "do" <* optional (symbol ":")
+      pure $ L.IndentMany Nothing (pure . UponTimerD @Parsed () fld) pStatement
+
     uponD = indentBlock do
       fld <- symbol' "upon" *> pFLDecl <* symbol "do" <* optional (symbol ":")
       pure $ L.IndentMany Nothing (pure . UponD @Parsed () fld) pStatement
@@ -78,6 +83,8 @@ pStatement :: Parser (Statement Parsed)
 pStatement = choice
   [ pIf
   , pForeach
+  , try (symbol' "setup" *> symbol' "periodic") *> symbol' "timer" $> uncurry . SetupPeriodicTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
+  , symbol' "setup" *> symbol' "timer" $> uncurry . SetupTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
   , symbol' "call" $> Call <*> pFLCall
   , try (symbol' "trigger" *> symbol' "send") $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp)
   , symbol' "trigger" $> Trigger <*> pFLCall

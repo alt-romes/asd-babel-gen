@@ -61,15 +61,16 @@ data TopDecl p
  = UponD (XUponD p) FLDecl [Statement p]
  | UponReceiveD (XUponReceiveD p) Identifier [Arg] [Statement p]
  | ProcedureD (XProcedureD p) FLDecl [Statement p]
- -- | MessagesD  --
- -- | TimersD    --
+ | UponTimerD (XUponTimerD p) FLDecl [Statement p]
 
 data Statement p
   = Assign Identifier (Expr p)
   | If (Expr p) [Statement p] [Statement p]
-  | TriggerSend Identifier [Expr p]
+  | TriggerSend Identifier [Expr p] -- TODO: Expr p "from" out of list of args
   | Trigger (FLCall p)
   | Call    (FLCall p)
+  | SetupPeriodicTimer Identifier (Expr p {- period -}) [Expr p]
+  | SetupTimer Identifier (Expr p {- period -}) [Expr p]
   | Foreach (XForeach p) Identifier (Expr p) [Statement p]
 
 data Expr p
@@ -107,6 +108,7 @@ data Typed
 type family XStateD  p
 type family XUponD   p
 type family XUponReceiveD p
+type family XUponTimerD p
 type family XProcedureD  p
 type family XForeach p
 type family XSet p
@@ -120,6 +122,8 @@ type instance XStateD  Parsed = ()
 type instance XStateD  Typed  = [AType]
 type instance XUponD   Parsed = ()
 type instance XUponD   Typed  = [AType]
+type instance XUponTimerD Parsed = ()
+type instance XUponTimerD Typed = [AType]
 type instance XUponReceiveD Parsed = ()
 type instance XUponReceiveD Typed = [AType]
 type instance XProcedureD Parsed = ()

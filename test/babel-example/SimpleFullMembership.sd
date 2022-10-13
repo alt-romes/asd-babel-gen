@@ -20,7 +20,15 @@ Upon Init(myself, ssSize, t, contact) do:
         membership <- membership U {contact}
     subsetSize <- ssSize
     tau <- t
-    // Setup Periodic Timer SampleTimer(tau)
+    Setup Periodic Timer SampleTimer(tau)
+
+Upon Timer SampleTimer() do:
+    If #membership >= 1 then:
+        target <- Call random(membership)
+        sample <- {self}
+        sample <- Call random(subsetSize, membership \ {target})
+        Trigger Send(SampleMSG, target, sample)
+
 
 Upon Receive(SampleMessage, s, sample) do:
     Foreach p ∈ sample do:
@@ -32,11 +40,4 @@ Upon Receive(SampleMessage, s, sample) do:
 //     if p in membership then
 //         membership <- membership \ {p}
 //         Trigger neighbourDown({p})
-
-// Upon Timer SampleTimer do:
-//     If #membership >= 1 then:
-//         target <- Call random(membership)
-//         sample <- {self}
-//         sample <- Call random(subsetSize, membership \ {target})
-//         Trigger Send(SampleMSG, target, sample)
 

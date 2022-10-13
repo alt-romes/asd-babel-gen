@@ -98,7 +98,7 @@ genHelperCommon _ _ _ _ = error "impossible,,, how I wish I had done this correc
 -- codegen :: (Identifier, Int) -> Algorithm Typed -> J.CompilationUnit
 -- codegen i = runBabel . translateAlg i
 
-data Scope = UponRequest | UponNotification | UponMessage | Init | Procedure
+data Scope = UponRequest | UponNotification | UponMessage | Init | Procedure | UponTimer
 
 pushScope :: (Scope, [Identifier]) -> Babel a -> Babel a
 pushScope = local . first . (:)
@@ -115,7 +115,7 @@ registerMessage = modify . second . second . (:)
 
 -- | Translate algorithm given protocol identifier and protocol name
 translateAlg :: (Identifier, Int) -> Algorithm Typed -> Babel J.CompilationUnit
-translateAlg (protoName, protoId) (P (InterfaceD ts requests indications) (StateD varTypes vars) tops) = do
+translateAlg (protoName, protoId) (P (InterfaceD _ _ _) (StateD varTypes vars) tops) = do
   methodDecls <- forM tops translateTop
   (reqHandlers, (subNotis, subMsgs)) <- get
   let
@@ -162,6 +162,11 @@ translateTop top = do
       let argTypes' = map translateType argTypes
       bodyStmts <- pushScope (Procedure, args) $ mapM translateStmt stmts
       pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident name) (map (\(a, t) -> FormalParam [] t False (VarId (Ident a))) (zip args argTypes')) [] Nothing (MethodBody $ Just $ Block bodyStmts)
+
+    UponTimerD argTypes (FLDecl name (map argName -> args)) stmts -> do
+      bodyStmts <- pushScope (UponTimer, args) $ mapM translateStmt stmts
+      pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident ("upon" <> upperFirst name)) [ FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident $ upperFirst name, [])]) False (VarId (Ident "timer"))
+                                                                                              , FormalParam [] (PrimType ShortT) False (VarId (Ident "timerId")) ] [] Nothing (MethodBody $ Just $ Block bodyStmts)
 
     UponD argTypes (FLDecl name (map argName -> args)) stmts -> do
       let argTypes' = map translateType argTypes
@@ -211,10 +216,19 @@ translateStmt = fmap BlockStmt . para \case
           pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendMsg"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst messageType,[])]) argsExps' Nothing, to]
         _ -> error "impossible :)  can't send without the correct parameters"
 
-
   CallF (FLCall name args) -> do
     argsExps <- mapM translateExp args
     pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident name]) argsExps
+
+  SetupPeriodicTimerF name timer args -> do
+    timerExp <- translateExp timer
+    argsExps <- mapM translateExp args
+    pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "setupPeriodicTimer"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, timerExp, timerExp]
+
+  SetupTimerF name timer args -> do
+    timerExp <- translateExp timer
+    argsExps <- mapM translateExp args
+    pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "setupTimer"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, BinOp timerExp Mult (Lit (Int 1000))]
 
   TriggerF (FLCall name args) -> do
     (requests, indications) <- asks (bimap (map (\(FLDecl n _) -> n)) (map (\(FLDecl n _) -> n)) . snd)
@@ -321,6 +335,7 @@ translateIdentifier i = asks fst >>= pure . trId'
                       UponMessage -> MethodInv $ PrimaryMethodCall (ExpName $ Name [Ident "msg"]) [] (Ident $ "get" <> upperFirst i) []
                       Init -> ExpName $ Name [Ident i]
                       Procedure -> ExpName $ Name [Ident i]
+                      UponTimer -> MethodInv $ PrimaryMethodCall (ExpName $ Name [Ident "timer"]) [] (Ident $ "get" <> upperFirst i) []
 
 translateType :: AType -> Type
 translateType = cata \case

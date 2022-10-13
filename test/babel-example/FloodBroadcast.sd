@@ -40,7 +40,6 @@ Upon neighbourDown(downNeighbours) do:
   Foreach h ∈ downNeighbours do:
     neighbours <- neighbours \ {h}
 
-
 Upon channelCreated(channelId) do:
   // We should register our own callbacks and serializers, only then,
   channelReady <- true
