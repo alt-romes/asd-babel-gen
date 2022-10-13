@@ -201,10 +201,10 @@ translateStmt = fmap BlockStmt . para \case
         elseS' <- StmtBlock . Block . map BlockStmt <$> sequence elseS
         pure $ IfThenElse e' thenS' elseS'
 
-  TriggerSendF name args -> do
+  TriggerSendF messageType args -> do
     argsExps <- mapM translateExp args
     case zip args argsExps of
-        (Id _ messageType,_):(_, to):(map snd -> argsExps') ->
+        (_, to):(map snd -> argsExps') ->
           pure $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "sendMsg"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst messageType,[])]) argsExps' Nothing, to]
         _ -> error "impossible :)  can't send without the correct parameters"
 
