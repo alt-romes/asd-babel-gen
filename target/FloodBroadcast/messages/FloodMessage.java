@@ -33,6 +33,14 @@ public class FloodMessage extends ProtoMessage
     {
         public void serialize (FloodMessage msg, ByteBuf out) throws IOException
         {
+            out.writeLong(msg.getMid().getMostSignificantBits());
+            out.writeLong(msg.getMid().getLeastSignificantBits());
+            Host.serializer.serialize(msg.getS(), out);
+            out.writeInt(msg.getM().length);
+            if (msg.getM().length > 0)
+            {
+                out.writeBytes(msg.getM());
+            }
         }
         public FloodMessage deserialize (ByteBuf in) throws IOException
         {

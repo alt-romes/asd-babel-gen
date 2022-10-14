@@ -14,7 +14,7 @@ State:
     subsetSize // number of neighbours to send to other
     tau          // period between anouncements
 
-Upon Init(myself, ssSize, t, contact) do:
+Upon Init(myself : Host, ssSize, t, contact) do:
 
     self <- myself
     membership <- {}

@@ -91,14 +91,41 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
   makeSerializerBody :: ClassBody
   makeSerializerBody = ClassBody
                         [ MemberDecl $ MethodDecl [Public] [] Nothing "serialize" [FormalParam [] (classRefType $ upperFirst name) False $ VarId "msg", FormalParam [] (classRefType "ByteBuf") False $ VarId "out"] [ClassRefType $ ClassType [("IOException",[])]] Nothing $
-                            MethodBody $ Just $ Block
-                              [
-                              ]
+                            MethodBody $ Just $ Block $ concat $
+                              zipWith serialT (map Just args) argTys
                         , MemberDecl $ MethodDecl [Public] [] (Just $ classRefType $ upperFirst name) "deserialize" [FormalParam [] (classRefType "ByteBuf") False $ VarId "in"] [ClassRefType $ ClassType [("IOException",[])]] Nothing $
                             MethodBody $ Just $ Block
                               [
                               ]
                         ]
+
+  serialT :: Maybe Identifier -> AType -> [BlockStmt]
+  serialT mname = \case
+    TSet t -> [ BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeInt" [MethodInv $ PrimaryMethodCall nameExp [] "size" []]
+              , BlockStmt $ EnhancedFor [] (translateType t) "x" nameExp (StmtBlock $ Block $ serialT Nothing t)
+              ]
+    TClass "Host" -> [ BlockStmt $ ExpStmt $ MethodInv $ TypeMethodCall (Name ["Host","serializer"]) [] "serialize" [nameExp, "out"]
+                     ]
+
+    TClass "UUID" -> [ BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeLong" [MethodInv $ PrimaryMethodCall nameExp [] "getMostSignificantBits" []]
+                     , BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeLong" [MethodInv $ PrimaryMethodCall nameExp [] "getLeastSignificantBits" []]
+                     ]
+
+    TArray TByte -> [ BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeInt" [FieldAccess $ PrimaryFieldAccess nameExp "length"]
+                    , BlockStmt $ IfThen (BinOp (FieldAccess (PrimaryFieldAccess nameExp "length")) GThan (Lit $ Int 0)) $ StmtBlock $ Block $
+                        [BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeBytes" [nameExp]]
+                    ]
+
+    TClass ('U':'n':'k':'n':'o':'w':'n':_) -> error "Can't serialize unknown variables!"
+
+    t -> error $ "Don't know how to serialize " <> show mname <> " " <> show t
+
+    where
+      nameExp :: Exp
+      nameExp = case mname of
+                  Just name -> MethodInv $ PrimaryMethodCall "msg" [] (Ident $ "get" <> upperFirst name) []
+                  Nothing   -> "x"
+
 
 
 genTimer :: (Identifier, [(Identifier, AType)]) -> Int -> J.CompilationUnit
@@ -448,3 +475,9 @@ freshI = do
 
 instance IsString Ident where
   fromString = Ident
+
+instance IsString Name where
+  fromString x = Name [Ident x]
+
+instance IsString Exp where
+  fromString x = ExpName $ Name [Ident x]
