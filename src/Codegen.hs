@@ -28,8 +28,11 @@ import Syntax
 import Typechecker (expType)
 
 type Env = M.Map Identifier ()
-type Babel = RWS ([(Scope, [Identifier])], ([Request], [Indication])) () -- Reader: (Scope, (Requests, Indications))
+type Babel = RWS ([(Scope, [Identifier])], ([Request], [Indication])) -- Reader: (Scope, (Requests, Indications))
+                 W -- Writer: (Messages, Timers)
                  ([Identifier], [Identifier], [Identifier], [Identifier]) -- State: (Request Handlers, Notification Subscriptions, Messages, Timers)
+
+type W = ([(Identifier, [(Identifier, AType)])], [(Identifier, [(Identifier, AType)])])
 
 type Indication = FLDecl
 type Request    = FLDecl
@@ -44,46 +47,62 @@ codegenProtocols protos = first ("./" <>) <$> (`evalState` 100) do
     let reqTs = zip reqs (fst ts)
         indTs = zip inds (snd ts)
     topI <- get
+    let (proto, (messages, timers)) = runBabel $ local (second (<> (allReqs, allInds))) $ translateAlg (upperFirst name, topI) p
     modify' (+1)
     rs <- forM reqTs $ \a@(FLDecl rName _,_) -> do
       i <- freshI
-      pure (name <> "/common/" <> upperFirst rName <> ".java", genRequest a i)
+      pure (name <> "/common/requests/" <> upperFirst rName <> ".java", genRequest a i)
     is <- forM indTs $ \a@(FLDecl iName _,_) -> do
       i <- freshI
-      pure (name <> "/common/" <> upperFirst iName <> ".java", genIndication a i)
-    let proto = runBabel $ local (second (<> (allReqs, allInds))) $ translateAlg (upperFirst name, topI) p
+      pure (name <> "/common/notifications/" <> upperFirst iName <> ".java", genIndication a i)
+    -- ms <- forM messages $ \m@(mName,_) -> do
+    --   i <- freshI
+    --   pure (name <> "/messages/" <> upperFirst mName <> ".java", genMessage m i)
+    tms <- forM timers $ \t@(tName,_) -> do
+      i <- freshI
+      pure (name <> "/timers/" <> upperFirst tName <> ".java", genTimer t i)
     put (topI+100)
-    pure ((name <> "/" <> name <> ".java", proto) : (rs <> is))
+    pure ((name <> "/" <> name <> ".java", proto) : (rs <> is  <> tms))
 
 genRequest :: (FLDecl, AType)
            -> Int -- ^ Identifier
            -> J.CompilationUnit
-genRequest x i = genHelperCommon x i "REQUEST_ID" "ProtoRequest"
+genRequest (FLDecl name (map argName -> args), TFun argTys TVoid) i = genHelperCommon (name, args, argTys) i "REQUEST_ID" "ProtoRequest" []
+genRequest _ _ = error "impossible,,, requests should have type (...) -> Void"
 
 genIndication :: (FLDecl, AType)
               -> Int -- ^ Identifier
               -> J.CompilationUnit
-genIndication x i = genHelperCommon x i "NOTIFICATION_ID" "ProtoNotification"
+genIndication (FLDecl name (map argName -> args), TFun argTys TVoid) i = genHelperCommon (name, args, argTys) i "NOTIFICATION_ID" "ProtoNotification" []
+genIndication _ _ = error "impossible,,, indications should have type (...) -> Void"
 
-genHelperCommon :: (FLDecl, AType)
+genMessage :: (Identifier, [(Identifier, AType)]) -> Int -> J.CompilationUnit
+genMessage = undefined
+
+genTimer :: (Identifier, [(Identifier, AType)]) -> Int -> J.CompilationUnit
+genTimer (name, unzip -> (args, argTys)) i = genHelperCommon (name, args, argTys) i "TIMER_ID" "ProtoTimer"
+                [ MemberDecl $ MethodDecl [Public] [] (Just $ classRefType "ProtoTimer") (Ident "clone") [] [] Nothing $ MethodBody $ Just $ Block [BlockStmt $ Return $ Just This]
+                ]
+
+genHelperCommon :: (Identifier, [Identifier], [AType])
                 -> Int -- ^ Numeric Identifier
                 -> String -- ^ Name of static identifier field
                 -> String -- ^ Name of class it should extend
+                -> [Decl] -- ^ Extra declarations in the class body
                 -> J.CompilationUnit
-genHelperCommon (FLDecl name (map argName -> args), TFun argTys TVoid) nid sif protoExtends = do
+genHelperCommon (name, args, argTys) nid sif protoExtends extraBody = do
     let
         argTys' = map translateType argTys
-        protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident sif)) (Just $ InitExp $ Lit $ Int $ toInteger nid)]
+        protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Static, Final] (PrimType ShortT) [VarDecl (VarId (Ident sif)) (Just $ InitExp $ Lit $ Int $ toInteger nid)]
                           ] 
         fieldDecls = zipWith (\v t -> MemberDecl $ FieldDecl [Private, Final] t [VarDecl (VarId (Ident v)) Nothing]) args argTys'
         constructor = MemberDecl $ ConstructorDecl [Public] [] (Ident $ upperFirst name) (zipWith (\x t -> FormalParam [] t False (VarId (Ident x))) args argTys') [] $ ConstructorBody (Just $ SuperInvoke [] [ExpName $ Name [Ident sif]]) registers
         registers = map (\x -> BlockStmt $ ExpStmt $ J.Assign (FieldLhs $ PrimaryFieldAccess This (Ident x)) EqualA (ExpName $ Name [Ident x])) args
         methodDecls = zipWith (\x t -> MemberDecl $ MethodDecl [Public] [] (Just t) (Ident ("get" <> upperFirst x)) [] [] Nothing (MethodBody $ Just $ Block [BlockStmt $ Return $ Just $ ExpName $ Name [Ident x]])) args argTys'
-        classBody   = ClassBody $ protoFieldDecls <> fieldDecls <> [constructor] <> methodDecls
+        classBody   = ClassBody $ protoFieldDecls <> fieldDecls <> [constructor] <> methodDecls <> extraBody
      in
         CompilationUnit Nothing [ImportDecl False (Name [Ident "java", Ident "util", Ident "*"]) False, ImportDecl False (Name [Ident "pt", Ident "unl", Ident "fct", Ident "di", Ident "novasys", Ident "babel", Ident "*"]) False]
                                 [ClassTypeDecl $ ClassDecl [Public] (Ident $ upperFirst name) [] (Just $ ClassRefType $ ClassType [(Ident protoExtends, [])]) [] classBody]
-genHelperCommon _ _ _ _ = error "impossible,,, how I wish I had done this correctly and this was all in the types,,, should have thought it through before hacking it together ;)"
 
 
   -- let (requests, indications) = bimap concat concat $ unzip $ map ((\(InterfaceD () reqs inds) -> (reqs, inds)) . interfaceD) ps
@@ -122,8 +141,8 @@ translateAlg (protoName, protoId) (P (InterfaceD _ _ _) (StateD varTypes vars) t
   (reqHandlers, subNotis, subMsgs, subTimers) <- get
   let
       varTypes' = map translateType varTypes
-      protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Final] stringType [VarDecl (VarId (Ident "PROTO_NAME")) (Just $ InitExp $ Lit $ String protoName)]
-                        , MemberDecl $ FieldDecl [Public, Final] (PrimType ShortT) [VarDecl (VarId (Ident "PROTO_ID")) (Just $ InitExp $ Lit $ Int $ toInteger protoId)]
+      protoFieldDecls = [ MemberDecl $ FieldDecl [Public, Static, Final] stringType [VarDecl (VarId (Ident "PROTO_NAME")) (Just $ InitExp $ Lit $ String protoName)]
+                        , MemberDecl $ FieldDecl [Public, Static, Final] (PrimType ShortT) [VarDecl (VarId (Ident "PROTO_ID")) (Just $ InitExp $ Lit $ Int $ toInteger protoId)]
                         ] 
       fieldDecls = map (\(v, t) -> MemberDecl $ FieldDecl [Private] t [VarDecl (VarId (Ident v)) Nothing]) (zip vars varTypes')
       constructor = MemberDecl $ ConstructorDecl [Public] [] (Ident protoName) [] [ClassRefType $ ClassType [(Ident "HandlerRegistrationException", [])]] $ ConstructorBody (Just $ SuperInvoke [] [ExpName $ Name $ [Ident "PROTO_NAME"], ExpName $ Name $ [Ident "PROTO_ID"]]) registers
@@ -150,11 +169,10 @@ translateTop top = do
   (requests, indications) <- asks (bimap (fmap (\(FLDecl n _) -> n)) (fmap (\(FLDecl n _) -> n)) . snd)
   case top of
     UponReceiveD argTypes messageType (map argName -> args) stmts -> do
-      let argTypes' = map translateType argTypes
       case args of
         from:args' -> do
           bodyStmts <- pushScope (UponMessage, from:args') $ mapM translateStmt stmts
-          makeMessage messageType args' (drop 1 argTypes')
+          makeMessage messageType args' (drop 1 argTypes)
           registerMessage messageType
           pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident ("upon" <> upperFirst messageType)) [ FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident $ upperFirst messageType, [])]) False (VarId (Ident "msg"))
                                                                                                          , FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident "Host", [])]) False (VarId (Ident from)) 
@@ -171,8 +189,7 @@ translateTop top = do
     UponTimerD argTypes (FLDecl name (map argName -> args)) stmts -> do
       bodyStmts <- pushScope (UponTimer, args) $ mapM translateStmt stmts
       registerTimer name
-      let argTypes' = map translateType argTypes
-      makeTimer name args argTypes'
+      makeTimer name args argTypes
       pure $ MemberDecl $ MethodDecl [Private] [] Nothing (Ident ("upon" <> upperFirst name)) [ FormalParam [] (RefType $ ClassRefType $ ClassType [(Ident $ upperFirst name, [])]) False (VarId (Ident "timer"))
                                                                                               , FormalParam [] (PrimType ShortT) False (VarId (Ident "timerId")) ] [] Nothing (MethodBody $ Just $ Block bodyStmts)
 
@@ -380,19 +397,20 @@ translateType = cata \case
   TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
   TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
 
-makeMessage :: Identifier -> [Identifier] -> [Type] -> Babel ()
-makeMessage i ids tys = do
-  pure ()
+classRefType :: Identifier -> Type
+classRefType i = RefType $ ClassRefType $ ClassType [(Ident i, [])]
 
-makeTimer :: Identifier -> [Identifier] -> [Type] -> Babel ()
-makeTimer i ids tys = do
-  pure ()
+makeMessage :: Identifier -> [Identifier] -> [AType] -> Babel ()
+makeMessage i ids tys = tell ([(i, zip ids tys)], mempty)
+
+makeTimer :: Identifier -> [Identifier] -> [AType] -> Babel ()
+makeTimer i ids tys = tell (mempty, [(i, zip ids tys)])
 
 stringType :: Type
 stringType = RefType $ ClassRefType $ ClassType [(Ident "String", [])]
-  
-runBabel :: Babel a -> a
-runBabel b = fst $ evalRWS b mempty mempty
+
+runBabel :: Babel a -> (a, W)
+runBabel b = evalRWS b mempty mempty
 
 -- | Upper cases the first letter of a string
 upperFirst :: String -> String

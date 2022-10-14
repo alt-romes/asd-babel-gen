@@ -2,8 +2,8 @@ import java.util.*;
 import pt.unl.fct.di.novasys.babel.*;
 public class FloodBroadcast extends GenericProtocol
 {
-  public final String PROTO_NAME = "FloodBroadcast";
-  public final short PROTO_ID = 200;
+  public static final String PROTO_NAME = "FloodBroadcast";
+  public static final short PROTO_ID = 200;
   private Host myself;
   private Set<Host> neighbours;
   private Set<UUID> received;

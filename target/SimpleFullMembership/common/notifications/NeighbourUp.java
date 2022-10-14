@@ -2,7 +2,7 @@ import java.util.*;
 import pt.unl.fct.di.novasys.babel.*;
 public class NeighbourUp extends ProtoNotification
 {
-  public final short NOTIFICATION_ID = 102;
+  public static final short NOTIFICATION_ID = 102;
   private final Set<Host> upNeighbours;
   public NeighbourUp (Set<Host> upNeighbours)
   {

@@ -1,14 +1,14 @@
 import java.util.*;
 import pt.unl.fct.di.novasys.babel.*;
-public class BroadcastRequest extends ProtoRequest
+public class DeliverNotification extends ProtoNotification
 {
-  public final short REQUEST_ID = 201;
+  public static final short NOTIFICATION_ID = 202;
   private final UUID mid;
   private final Host s;
   private final byte[] m;
-  public BroadcastRequest (UUID mid, Host s, byte[] m)
+  public DeliverNotification (UUID mid, Host s, byte[] m)
   {
-    super(REQUEST_ID);
+    super(NOTIFICATION_ID);
     this.mid = mid;
     this.s = s;
     this.m = m;

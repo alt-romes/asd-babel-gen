@@ -2,8 +2,8 @@ import java.util.*;
 import pt.unl.fct.di.novasys.babel.*;
 public class SimpleFullMembership extends GenericProtocol
 {
-  public final String PROTO_NAME = "SimpleFullMembership";
-  public final short PROTO_ID = 100;
+  public static final String PROTO_NAME = "SimpleFullMembership";
+  public static final short PROTO_ID = 100;
   private Unknown27 self;
   private Set<Unknown27> membership;
   private Set<Unknown27> pending;
