@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TupleSections #-}
@@ -10,6 +11,7 @@ module Codegen where
 -- TODO: Really, we should only do this after passing through an initial desugaring phase into another intermediate representation which is then typechecked.
 -- Since it doesn't really matter in the long term, I'll just accept this mess
 
+import Data.String
 import qualified Data.Char as C
 import qualified Data.List as L
 import qualified Data.Map as M
@@ -55,14 +57,14 @@ codegenProtocols protos = first ("./" <>) <$> (`evalState` 100) do
     is <- forM indTs $ \a@(FLDecl iName _,_) -> do
       i <- freshI
       pure (name <> "/common/notifications/" <> upperFirst iName <> ".java", genIndication a i)
-    -- ms <- forM messages $ \m@(mName,_) -> do
-    --   i <- freshI
-    --   pure (name <> "/messages/" <> upperFirst mName <> ".java", genMessage m i)
+    ms <- forM messages $ \m@(mName,_) -> do
+      i <- freshI
+      pure (name <> "/messages/" <> upperFirst mName <> ".java", genMessage m i)
     tms <- forM timers $ \t@(tName,_) -> do
       i <- freshI
       pure (name <> "/timers/" <> upperFirst tName <> ".java", genTimer t i)
     put (topI+100)
-    pure ((name <> "/" <> name <> ".java", proto) : (rs <> is  <> tms))
+    pure ((name <> "/" <> name <> ".java", proto) : (rs <> is <> ms <> tms))
 
 genRequest :: (FLDecl, AType)
            -> Int -- ^ Identifier
@@ -77,7 +79,27 @@ genIndication (FLDecl name (map argName -> args), TFun argTys TVoid) i = genHelp
 genIndication _ _ = error "impossible,,, indications should have type (...) -> Void"
 
 genMessage :: (Identifier, [(Identifier, AType)]) -> Int -> J.CompilationUnit
-genMessage = undefined
+genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys) i "MSG_ID" "ProtoMessage"
+                [ MemberDecl $ MethodDecl [Public] [] (Just $ stringType) "toString" [] [] Nothing $
+                    MethodBody $ Just $ Block [BlockStmt $ Return $ Just $ Lit $ String $ upperFirst name <> "{}"]
+                , MemberDecl $ FieldDecl [Public, Static] (RefType $ ClassRefType $ serializerClassType)
+                    [VarDecl (VarId $ "serializer") (Just $ InitExp $ InstanceCreation [] (TypeDeclSpecifier serializerClassType) [] (Just makeSerializerBody))]
+                ]
+  where
+  serializerClassType = ClassType [("ISerializer",[ActualType $ ClassRefType $ ClassType [(Ident $ upperFirst name,[])]])]
+
+  makeSerializerBody :: ClassBody
+  makeSerializerBody = ClassBody
+                        [ MemberDecl $ MethodDecl [Public] [] Nothing "serialize" [FormalParam [] (classRefType $ upperFirst name) False $ VarId "msg", FormalParam [] (classRefType "ByteBuf") False $ VarId "out"] [ClassRefType $ ClassType [("IOException",[])]] Nothing $
+                            MethodBody $ Just $ Block
+                              [
+                              ]
+                        , MemberDecl $ MethodDecl [Public] [] (Just $ classRefType $ upperFirst name) "deserialize" [FormalParam [] (classRefType "ByteBuf") False $ VarId "in"] [ClassRefType $ ClassType [("IOException",[])]] Nothing $
+                            MethodBody $ Just $ Block
+                              [
+                              ]
+                        ]
+
 
 genTimer :: (Identifier, [(Identifier, AType)]) -> Int -> J.CompilationUnit
 genTimer (name, unzip -> (args, argTys)) i = genHelperCommon (name, args, argTys) i "TIMER_ID" "ProtoTimer"
@@ -423,3 +445,6 @@ freshI = do
   i <- get
   put (let !x = i+1 in x)
   pure i
+
+instance IsString Ident where
+  fromString = Ident
