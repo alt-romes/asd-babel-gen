@@ -44,6 +44,18 @@ public class FloodMessage extends ProtoMessage
         }
         public FloodMessage deserialize (ByteBuf in) throws IOException
         {
+            long firstLong;
+            long secondLong;
+            int size;
+            firstLong = in.readLong();
+            secondLong = in.readLong();
+            UUID mid = new UUID(firstLong, secondLong);
+            Host s = Host.serializer.deserialize(in);
+            size = in.readInt();
+            byte m = new byte[size];
+            if (size > 0)
+                in.readBytes(m);
+            return new FloodMessage(mid, s, m);
         }
     };
 }

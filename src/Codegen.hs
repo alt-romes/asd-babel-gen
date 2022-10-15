@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE BangPatterns #-}
@@ -94,10 +95,22 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
                             MethodBody $ Just $ Block $ concat $
                               zipWith serialT (map Just args) argTys
                         , MemberDecl $ MethodDecl [Public] [] (Just $ classRefType $ upperFirst name) "deserialize" [FormalParam [] (classRefType "ByteBuf") False $ VarId "in"] [ClassRefType $ ClassType [("IOException",[])]] Nothing $
-                            MethodBody $ Just $ Block
-                              [
-                              ]
+                            MethodBody $ Just $ Block $
+                              let (concat -> bls, exps) = unzip (zipWith (deserialT 0) (map Just args) argTys) in
+-- TODO: ordNub from list utils something
+                              map (\(n,t) -> LocalVars [] t [VarDecl (VarId n) Nothing]) (L.nub $ concatMap neededLocalVars argTys)
+                              <> bls
+                              <> [BlockStmt $
+                                    Return $ Just $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) exps Nothing]
                         ]
+
+  neededLocalVars :: AType -> [(Ident,Type)]
+  neededLocalVars = \case
+    TSet _ -> [("size", PrimType IntT)]
+    TClass "UUID" -> [("firstLong", PrimType LongT), ("secondLong", PrimType LongT)]
+    TArray _ -> [("size", PrimType IntT)]
+    _ -> []
+
 
   serialT :: Maybe Identifier -> AType -> [BlockStmt]
   serialT mname = \case
@@ -125,6 +138,48 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
       nameExp = case mname of
                   Just name -> MethodInv $ PrimaryMethodCall "msg" [] (Ident $ "get" <> upperFirst name) []
                   Nothing   -> "x"
+
+  deserialT :: Int -> Maybe Identifier -> AType -> ([BlockStmt], Exp)
+  deserialT it mname = \case
+    TSet t -> let (bs, recE) = deserialT (it+1) Nothing t in
+      ([ BlockStmt $ ExpStmt $ J.Assign (NameLhs "size") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readInt" []
+       , LocalVars [] (translateType (TSet t)) [VarDecl (VarId $ Ident name) (Just $ InitExp $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType $ let RefType r = translateType t in r])]) [ExpName "size", Lit $ Int 1] Nothing)]
+       , BlockStmt $ BasicFor (Just $ ForLocalVars [] (PrimType IntT) [VarDecl (VarId $ Ident [alphalist !! it]) (Just $ InitExp $ Lit $ Int 0)])
+                             (Just $ BinOp (fromString [alphalist !! it]) LThan "size")
+                             (Just $ [PostIncrement (fromString [alphalist !! it])])
+                             (StmtBlock $ Block $ bs <> [BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall (fromString name) [] "add" [recE]])
+      ], fromString name)
+    TClass "Host" ->
+      let ep = MethodInv $ TypeMethodCall (Name ["Host","serializer"]) [] "deserialize" ["in"] in
+      case mname of
+        Nothing -> ([],ep)
+        Just n' -> ([LocalVars [] (translateType (TClass "Host")) [VarDecl (VarId $ fromString name) $ Just $ InitExp ep]], fromString n')
+
+    TClass "UUID" ->
+      let common = [ BlockStmt $ ExpStmt $ J.Assign (NameLhs "firstLong") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readLong" []
+                   , BlockStmt $ ExpStmt $ J.Assign (NameLhs "secondLong") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readLong" []
+                   ]
+          exp = InstanceCreation [] (TypeDeclSpecifier $ ClassType [("UUID",[])]) ["firstLong", "secondLong"] Nothing
+       in case mname of
+        Nothing -> (common, exp)
+        Just n' -> (common <> [LocalVars [] (translateType (TClass "UUID")) [VarDecl (VarId $ fromString n') $ Just $ InitExp exp]], fromString n')
+
+    TArray TByte ->
+      let
+       in case mname of
+            Nothing -> error "how to recurse something that has a byte[]?"
+            Just n' ->
+              ([ BlockStmt $ ExpStmt $ J.Assign (NameLhs "size") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readInt" []
+               , LocalVars [] (PrimType ByteT) [VarDecl (VarId $ fromString n') $ Just $ InitExp $ ArrayCreate (PrimType ByteT) ["size"] 0]
+               , BlockStmt $ IfThen (BinOp "size" GThan (Lit $ Int 0)) $ ExpStmt $ MethodInv $ PrimaryMethodCall "in" [] "readBytes" [fromString n']
+               ], fromString n')
+
+    TClass ('U':'n':'k':'n':'o':'w':'n':_) -> error "Can't serialize unknown variables!"
+
+    t -> error $ "Don't know how to serialize " <> show mname <> " " <> show t
+    where
+      name = case mname of Nothing -> error "deserialize shouldn't try to use a name when it doesn't need one"; Just n -> n
+      alphalist = ['a'..]
 
 
 
