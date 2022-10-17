@@ -124,9 +124,14 @@ pExp = makeExprParser
     ]
   , [ InfixL (In <$ (symbol "∈" <|> symbol' "in"))
     , InfixL (NotIn <$ (symbol "∉" <|> (symbol' "not" <* symbol' "in")))
+    , InfixL (BOp Syntax.SUBSETEQ <$ (symbol "⊆" <|> (symbol' "subset" <* symbol' "of")))
+    , binary "+" (BOp Syntax.ADD)
+    , binary "-" (BOp Syntax.MINUS)
+    , binary "*" (BOp Syntax.MUL)
+    , InfixL (BOp Syntax.DIV <$ symbol "/")
     ]
   , [ binary "=" (BOp Syntax.EQ)
-    , binary "/=" (BOp NE)
+    , InfixL (BOp NE <$ (symbol "≠" <|> symbol "!="))
     , binary ">=" (BOp GE)
     , binary "<=" (BOp LE)
     , binary "<" (BOp Syntax.LT)

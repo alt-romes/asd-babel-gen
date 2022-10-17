@@ -114,6 +114,7 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
 
   serialT :: Maybe Identifier -> AType -> [BlockStmt]
   serialT mname = \case
+    TInt -> [BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeInt" [nameExp]]
     TSet t -> [ BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeInt" [MethodInv $ PrimaryMethodCall nameExp [] "size" []]
               , BlockStmt $ EnhancedFor [] (translateType t) "x" nameExp (StmtBlock $ Block $ serialT Nothing t)
               ]
@@ -141,6 +142,11 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
 
   deserialT :: Int -> Maybe Identifier -> AType -> ([BlockStmt], Exp)
   deserialT it mname = \case
+    TInt ->
+      let ep = MethodInv $ PrimaryMethodCall "in" [] "readInt" []
+       in case mname of
+            Nothing -> ([], ep)
+            Just n' -> ([LocalVars [] (PrimType IntT) [VarDecl (VarId $ fromString n') $ Just $ InitExp ep]], fromString n')
     TSet t -> let (bs, recE) = deserialT (it+1) Nothing t in
       ([ BlockStmt $ ExpStmt $ J.Assign (NameLhs "size") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readInt" []
        , LocalVars [] (translateType (TSet t)) [VarDecl (VarId $ Ident name) (Just $ InitExp $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType $ let RefType r = translateType t in r])]) [ExpName "size", Lit $ Int 1] Nothing)]
@@ -427,6 +433,11 @@ translateExp = para \case
       Syntax.GT -> pure $ BinOp e1' GThan e2'
       Syntax.AND -> pure $ BinOp e1' And e2'
       Syntax.OR  -> pure $ BinOp e1' Or e2'
+      Syntax.ADD  -> pure $ BinOp e1' Add e2'
+      Syntax.MINUS -> pure $ BinOp e1' Sub e2'
+      Syntax.MUL  -> pure $ BinOp e1' Mult e2'
+      Syntax.DIV  -> pure $ BinOp e1' Div e2'
+      Syntax.SUBSETEQ -> pure $ MethodInv $ PrimaryMethodCall e2' [] (Ident "containsAll") [e1']
   SetF t (unzip -> (_, ss)) -> case translateType t of
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of

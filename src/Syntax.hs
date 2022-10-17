@@ -99,6 +99,11 @@ data BOp
   | GT
   | AND
   | OR
+  | ADD
+  | MINUS
+  | MUL
+  | DIV
+  | SUBSETEQ
   deriving Show
 
 data AType
@@ -134,6 +139,7 @@ type family XId p
 type family XInterfaceD p
 type family XCall p
 type family XAssign p
+type family XSubsetOf  p
 
 type instance XAssign  Parsed = ()
 type instance XAssign  Typed  = Maybe AType -- Just Type if is a new local variable of type Type
@@ -155,6 +161,8 @@ type instance XSet Parsed = ()
 type instance XSet Typed = AType
 type instance XMap Parsed = ()
 type instance XMap Typed = AType
+type instance XSubsetOf Parsed = ()
+type instance XSubsetOf Typed = AType
 type instance XUnion Parsed = ()
 type instance XUnion Typed = AType
 type instance XDifference Parsed = ()

@@ -28,7 +28,7 @@ Procedure processFloodMessage(from, mid, s, m) do
     received <- received U {mid}
     Trigger deliverNotification(mid, s, m)
     Foreach host ∈ neighbours do:
-      if host /= from then
+      if host != from then
         Trigger Send(FloodMessage, host, mid, s, m)
   
 

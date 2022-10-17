@@ -24,7 +24,7 @@ Upon Init(myself : Host, ssSize, t, contact) do:
 
     Trigger channelCreated(0)
 
-    if contact /= ⊥ then
+    if contact ≠ ⊥ then
         pending <- pending U {contact}
         // TODO openConnection(contact)
 
@@ -32,7 +32,7 @@ Upon Init(myself : Host, ssSize, t, contact) do:
 
 Upon Receive(SampleMessage, s, sample) do:
     Foreach p ∈ sample do:
-        If p /= self ∧ p ∉ membership ∧ p ∉ pending then
+        If p != self ∧ p ∉ membership ∧ p ∉ pending then
             pending <- pending U {p}
             // openConnection(p)
             // Trigger neighbourUp({p})

@@ -13,6 +13,7 @@ Interface:
     Indications:
         rregReadReturn(value)
         rregWriteReturn()
+        crash(p)
 
 State:
     value
@@ -32,14 +33,14 @@ upon rregWrite(v) do:
 
 upon bebDeliver(s, v) do:
     value <- v
-    trigger send(Ack, s) // pp2pSend(Ack, s)
+    trigger send(Ack, s, 0) // pp2pSend(Ack, s)
 
-upon receive(Ack, s) do:
+upon receive(Ack, s, i) do:
     writeSet <- writeSet U {s}
     Call checkAcks()
 
 procedure checkAcks() do:
-    if correct ⊆ writeSet do:
+    if correct ⊆ writeSet then:
         writeSet <- {}
         trigger rregWriteReturn()
 

@@ -69,8 +69,13 @@ expType = cata \case
   IdF t _ -> t
   InF _ _ -> TBool
   NotInF _ _ -> TBool
-  -- TODO: Change this BOp if we ever add any non-boolean-returning-binary-operations
-  BOpF _ _ _ -> TBool
+  BOpF bop _ _ ->
+    case bop of
+      Syntax.ADD -> TInt 
+      Syntax.MINUS -> TInt 
+      Syntax.MUL -> TInt 
+      Syntax.DIV -> TInt 
+      _       -> TBool
   SetF t _ -> TSet t
   MapF _ m -> error "type map"
   UnionF t _ _ -> TSet t
@@ -239,6 +244,14 @@ inferExp = cata \case
     (t1, e1') <- e1
     (t2, e2') <- e2
     case bop of
+      Syntax.SUBSETEQ -> do
+        -- TODO: Or TMap ??
+        t3 <- TSet . TVar <$> fresh
+        constraint t1 t2 <* constraint t1 t3
+      Syntax.ADD -> constraint t1 TInt <* constraint t2 TInt
+      Syntax.MINUS -> constraint t1 TInt <* constraint t2 TInt
+      Syntax.MUL -> constraint t1 TInt <* constraint t2 TInt
+      Syntax.DIV -> constraint t1 TInt <* constraint t2 TInt
       Syntax.EQ -> constraint t1 t2
       Syntax.NE -> constraint t1 t2
       Syntax.LE -> constraint t1 TInt <* constraint t2 TInt
@@ -247,7 +260,7 @@ inferExp = cata \case
       Syntax.GT -> constraint t1 TInt <* constraint t2 TInt
       Syntax.AND -> constraint t1 TBool <* constraint t2 TBool
       Syntax.OR  -> constraint t1 TBool <* constraint t2 TBool
-    pure (TBool, BOp bop e1' e2')
+    pure (expType (BOp bop e1' e2'), BOp bop e1' e2')
   SetF _ s -> do
     s' <- sequence s
     case s' of
