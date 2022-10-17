@@ -531,4 +531,136 @@ How it works:
 Intuition: if we have a connected overlay and we flood a message, we end up with?
 
 
+---
+
+
+## Replication Algorithm
+
+* Transparency: A boolean property of a replicated system. If true, then the
+    client is never aware of the fact that the system is replicated.
+* Consistency: Such that the client can't be aware of the fact that different
+    replicas have different visions of the state?
+
+### Transparency
+
+
+Solution 1: With a proxy we could provide transparency
+Solution 2: One of the replicas can act as the proxy
+
+## Replication: Strategies
+
+* First dimension
+    * Active replication: All replicas execute all operations
+    * Passive replication: One replica executes and propagates teh result
+* Second dimension
+    * Synchronous replication: Replication befoer the client gets a response
+    * Asynchronous replication: Replication after the client gets a response
+* Third dimension
+    * Single master (aka master-slave): A special replica receives all (write)
+        operations
+    * Multi-master: Any replica can receive and process any operation
+
+### Active replication
+
+* All replicas execute all operations (at least the ones that modify the state)
+* Only possible if all operations are deterministic
+* If operations are not commutative, then all replicas must agree on the
+    execution order
+
+### Passive replication
+
+* If using non-deterministic operations this should be preferred
+* Load across replicas is not balanced
+
+### Synchronous replication
+
+* Operations take longer (delay of synchronizing)
+* Durability: if I receive a reply it is easier to guarantee that the effects of
+    the operation are not going to be lost
+
+### Asynchronous replication
+
+* Effects of client operations may be lost
+* Clients obtain replies faster
+
+
+(Tradeoff between durability and response times)
+
+
+### Single master (primary-backup)
+
+* Single replica (primary) that processes operations that modify the state
+* When th primary fails, one of the secondary replicas must take over the role
+* Two processes might believe themselves to be master at the same time. This
+    compromises safety so should never happen?
+
+### Multi-master
+
+* Any replica can process any operation
+* Better load balancing
+* Adding more replicas increases the overall capacity of the system
+
+
+## A simplistic replication algorithm
+
+### Register replication
+
+Liveness: every operation of a correct process eventually completes
+Safety: every read operation returns *the laste value written*
+
+Nota: *the laste value written* means that inside the operation window we can
+create a serialization point to arbiter thei order
+
+Fault model: Fail-stop
+Synchrony model: synchronous (we can use Upon Crash)
+Known and fixed membership (access to π)
+
+---
+
+## Quorum Based Replication
+
+The argument to show that it is correct is to compute the intersection
+
+If any pair of operations executed in the lifteime of the system has a non-empty
+intersection in the set of replicas executing it, we call this a quorum system
+
+Quorum system:
+Given a set of replicas P={p1,p2,...,pn} we call a quorum system as a set
+Q={q1,q2,...,qm} of subsets of P such that ...?
+
+
+The majority quorum is the safest one?
+
+For systems where read operations are much more common than write operations,
+other quorums might be beneficial (e.g. read-write quorums)
+
+Read-write quorum systems:
+Smaller read quorums, larger write quorums?
+
+
+
+[ In general, a quorum should never be larger than n-f. n-f is always the limit otherwise we can't guarantee an operation at all(...) ]
+
+### Quorum types: weighted voting
+(We do it over the sum of the weights)
+
+"I have to gather replies with at least weight X"
+
+### Quorum types: Grid quorums
+
+* Processes are organized (locgically) in a grid such taht 
+
+* Read quorum: collect a reply from each line
+* Write quorum: write an entire line, and then one replica in each line of the
+    ones below the line you wrote
+
+* We can have small amount of replicas to ensure the intersection (in theory
+    operations will be faster)
+* But is hard to manage, and things are discoordenated, and not perfect
+
+
+### Majority Quorum
+
+Tends to be a sweet spot, easy to manage, good tolerance...
+
 
