@@ -70,6 +70,7 @@ data Statement p
   | Trigger (FLCall p)
   | SetupPeriodicTimer Identifier (Expr p {- period -}) [Expr p]
   | SetupTimer Identifier (Expr p {- period -}) [Expr p]
+  | CancelTimer (FLCall p)
   | Foreach (XForeach p) Pat (Expr p) [Statement p]
   | ExprStatement (Expr p)
 
@@ -92,7 +93,7 @@ data Expr p
   | SizeOf (Expr p)                   -- e.g. #received
   | BOp BOp (Expr p) (Expr p)
   | Call (XCall p) (FLCall p)
-  | MapAccess Identifier (Expr p)
+  | MapAccess (XMapAccess p) Identifier (Expr p)
 
 -- data UOp
 --   =
@@ -151,7 +152,10 @@ type family XInterfaceD p
 type family XCall p
 type family XAssign p
 type family XSubsetOf  p
+type family XMapAccess  p
 
+type instance XMapAccess  Parsed = ()
+type instance XMapAccess  Typed  = AType
 type instance XAssign  Parsed = ()
 type instance XAssign  Typed  = Maybe AType -- Just Type if is a new local variable of type Type
 type instance XCall  Parsed = ()

@@ -64,20 +64,24 @@ pTopDecl = choice
 
   where
     procedureD = indentBlock do
-      fld <- symbol' "procedure" *> pFLDecl <* symbol "do" <* optional (symbol ":")
+      fld <- symbol' "procedure" *> pFLDecl <* pDo
       pure $ L.IndentMany Nothing (pure . ProcedureD @Parsed () fld) pStatement
 
     uponReceiveD = indentBlock do
-      (i,as) <- try (symbol' "upon" *> symbol' "receive") *> parens ((,) <$> identifier <* symbol "," <*> args) <* symbol "do" <* optional (symbol ":")
+      (i,as) <- try (symbol' "upon" *> symbol' "receive") *> parens ((,) <$> identifier <* symbol "," <*> args) <* pDo
       pure $ L.IndentMany Nothing (pure . UponReceiveD @Parsed () i as) pStatement
 
     uponTimerD = indentBlock do
-      fld <- try (symbol' "upon" *> symbol' "timer") *> pFLDecl <* symbol "do" <* optional (symbol ":")
+      fld <- try (symbol' "upon" *> symbol' "timer") *> pFLDecl <* pDo
       pure $ L.IndentMany Nothing (pure . UponTimerD @Parsed () fld) pStatement
 
     uponD = indentBlock do
-      fld <- symbol' "upon" *> pFLDecl <* symbol "do" <* optional (symbol ":")
+      fld <- symbol' "upon" *> pFLDecl <* pDo
       pure $ L.IndentMany Nothing (pure . UponD @Parsed () fld) pStatement
+
+
+pDo :: Parser ()
+pDo = () <$ optional (symbol "do") <* optional (symbol ":")
 
 pStatement :: Parser (Statement Parsed)
 pStatement = choice
@@ -85,6 +89,7 @@ pStatement = choice
   , pForeach
   , try (symbol' "setup" *> symbol' "periodic") *> symbol' "timer" $> uncurry . SetupPeriodicTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
   , symbol' "setup" *> symbol' "timer" $> uncurry . SetupTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
+  , symbol' "cancel" *> symbol' "timer" $> CancelTimer <*> pFLCall
   , try (symbol' "trigger" *> symbol' "send") $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp)
   , symbol' "trigger" $> Trigger <*> pFLCall
   , try $ Assign () <$> pLhs <* symbol "<-" <*> pExp
@@ -101,7 +106,7 @@ pStatement = choice
     pIf :: Parser (Statement Parsed)
     pIf = do
       (cond, thenS) <- indentBlock do
-        cond <- symbol' "if" *> pExp <* symbol' "then" <* optional (symbol ":")
+        cond <- symbol' "if" *> pExp <* ((() <$ symbol' "then" <* optional (symbol ":")) <|> pDo)
         pure $ L.IndentMany Nothing (pure . (cond,)) pStatement
       (fromMaybe [] -> elseS) <- optional $ indentBlock do
         _ <- symbol' "else"
@@ -125,7 +130,7 @@ pExp = makeExprParser
           , SetOrMap () <$> (symbol' "{" *> (many pExp <* optional (symbol ",")) <* symbol' "}")
           , uncurry Tuple <$> parens ((,) <$> pExp <* symbol "," <*> pExp)
           , Call () <$> (symbol' "call" *> pFLCall)
-          , try $ MapAccess <$> identifier <*> between (symbol "[") (symbol "]") pExp
+          , try $ MapAccess () <$> identifier <*> between (symbol "[") (symbol "]") pExp
           , Id () <$> identifier
           ])
   [ [ Prefix (SizeOf <$ symbol "#")

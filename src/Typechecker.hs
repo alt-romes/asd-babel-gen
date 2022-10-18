@@ -62,6 +62,7 @@ typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
 
 expType :: Expr Typed -> AType
 expType = cata \case
+  MapAccessF t2 _ _ -> t2
   TupleF t1 t2 -> TTuple t1 t2
   BottomF -> TNull
   CallF t _ -> t
@@ -160,7 +161,7 @@ inferStmts (stmt:stmts) = do
       case lhs of
         IdA i -> do
           findInEnv i >>= \case
-            Nothing -> do
+            Nothing ->
               -- we don't find this variable in scope, so we create it, and return it: this value will be used to push a scope on the next statements
               pure (Assign (Just t) (IdA i) e', Just (i, t))
             Just it -> constraint it t >> pure (Assign Nothing (IdA i) e', Nothing)
@@ -189,6 +190,7 @@ inferStmts (stmt:stmts) = do
         pure (TriggerSend name args', Nothing)
 
     Trigger flCall -> (,Nothing) . Trigger <$> inferFLCall TVoid flCall
+    CancelTimer flCall -> (,Nothing) . CancelTimer <$> inferFLCall TVoid flCall
 
     SetupTimer name timer args -> do
       (timerTy, timer') <- inferExp timer
@@ -235,6 +237,14 @@ inferFLCall retType (FLCall name args) = do
 
 inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
 inferExp = cata \case
+  MapAccessF _ i e -> do
+    (t, e') <- e
+    findInEnv i >>= \case
+        Nothing -> error $ "Couldn't find id " <> i
+        Just ft -> do
+          vt <- TVar <$> fresh
+          constraint ft (TMap t vt)
+          pure (vt, MapAccess vt i e')
   TupleF e1 e2 -> do
     (t1, e1') <- e1
     (t2, e2') <- e2
@@ -273,10 +283,7 @@ inferExp = cata \case
       Syntax.NOTIN -> constraint t2 (TSet t1)
       -- TODO: Only works for sets yet, but should also work for maps.
       -- TODO: Constraint set or map
-      Syntax.UNION -> do
-        t3 <- TSet . TVar <$> fresh
-        constraint t1 t2
-        constraint t1 t3
+      Syntax.UNION -> constraint t1 t2
       Syntax.DIFFERENCE -> constraint t1 t2
     pure (expType (BOp bop e1' e2'), BOp bop e1' e2')
   SetOrMapF _ s -> do
@@ -440,6 +447,7 @@ instance Substitutable (TopDecl Typed) where
 
 instance Substitutable (Statement Typed) where
   applySubst s = cata \case
+    CancelTimerF flc -> CancelTimer (applySubst s flc)
     AssignF t i e -> Assign (applySubst s t) i (applySubst s e)
     IfF e thenS elseS -> If (applySubst s e) thenS elseS
     TriggerSendF i e -> TriggerSend i (applySubst s e)
@@ -449,6 +457,7 @@ instance Substitutable (Statement Typed) where
     ForeachF tv i e stmts -> Foreach (applySubst s tv) i (applySubst s e) stmts
     ExprStatementF x -> ExprStatement (applySubst s x)
   ftv = cata \case
+    CancelTimerF flc -> ftv flc
     AssignF t _ _ -> ftv t
     IfF _ thenS elseS -> mconcat (thenS <> elseS)
     TriggerF fl -> ftv fl
@@ -464,6 +473,7 @@ instance Substitutable (FLCall Typed) where
 
 instance Substitutable (Expr Typed) where
   applySubst s = cata \case
+    MapAccessF t2 e f -> MapAccess (applySubst s t2) e f
     TupleF e f -> Tuple e f
     CallF t flc -> Call (applySubst s t) $ applySubst s flc
     SetOrMapF t n -> SetOrMap (applySubst s t) n
@@ -475,6 +485,7 @@ instance Substitutable (Expr Typed) where
     SizeOfF x -> SizeOf x
 
   ftv = cata \case
+    MapAccessF t2 _ _ -> ftv t2
     CallF t fl    -> ftv t <> ftv fl
     SetOrMapF t e -> ftv t <> mconcat e
     BOpF _ e f -> e <> f

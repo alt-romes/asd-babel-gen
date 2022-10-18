@@ -528,12 +528,20 @@ translateType = cata \case
   TBoolF -> PrimType BooleanT
   TStringF -> stringType
   TSetF x -> case x of
-    PrimType x' -> error $ show x' <> " is not a boxed/Object type"
+    PrimType x' -> case x' of
+                     IntT -> RefType $ ClassRefType $ ClassType [(Ident "Integer", [])]
+                     _ -> error $ show x' <> " is not a boxed/Object type"
     RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Set", [ActualType t])]
   TMapF x y -> case (x, y) of
     (RefType t1, RefType t2) -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t1, ActualType t2])]
-    (PrimType x', _) -> error $ show x' <> " is not a boxed/Object type"
-    (_, PrimType y') -> error $ show y' <> " is not a boxed/Object type"
+    (PrimType x', _) -> case x' of
+                          -- make intT -> Integer
+                          IntT -> RefType $ ClassRefType $ ClassType [(Ident "Integer", [])]
+                          _ -> error $ show x' <> " is not a boxed/Object type"
+    (_, PrimType y') -> case y' of
+                          IntT -> RefType $ ClassRefType $ ClassType [(Ident "Integer", [])]
+                          _ -> error $ show y' <> " is not a boxed/Object type"
+
   TFunF _ _ -> error "Fun type"
   TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
   TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
