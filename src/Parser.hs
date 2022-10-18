@@ -87,10 +87,17 @@ pStatement = choice
   , symbol' "setup" *> symbol' "timer" $> uncurry . SetupTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
   , try (symbol' "trigger" *> symbol' "send") $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp)
   , symbol' "trigger" $> Trigger <*> pFLCall
-  , try $ Assign () <$> identifier <* symbol "<-" <*> pExp
+  , try $ Assign () <$> pLhs <* symbol "<-" <*> pExp
   , ExprStatement <$> pExp
   ]
   where
+    pLhs :: Parser (ALhs Parsed)
+    pLhs = do
+      try (MapA <$> identifier <* symbol "[" <*> pExp <* symbol "]")
+      <|>
+      IdA <$> identifier
+
+
     pIf :: Parser (Statement Parsed)
     pIf = do
       (cond, thenS) <- indentBlock do
@@ -103,18 +110,22 @@ pStatement = choice
 
     pForeach :: Parser (Statement Parsed)
     pForeach = indentBlock do
-      (name, iterable) <- symbol' "foreach" $> (,) <*> identifier <* (symbol "∈" <|> symbol' "in") <*> pExp <* symbol "do" <* optional (symbol ":")
+      (name, iterable) <- symbol' "foreach" $> (,) <*> pPat <* (symbol "∈" <|> symbol' "in") <*> pExp <* symbol "do" <* optional (symbol ":")
       pure $ L.IndentMany Nothing (pure . Foreach () name iterable) pStatement
 
+pPat :: Parser Pat
+pPat = uncurry TupleP <$> parens ((,) <$> identifier <* symbol "," <*> identifier)
+    <|> IdP <$> identifier
 
 pExp :: Parser (Expr Parsed)
 pExp = makeExprParser
   (choice [ I <$> integer
           , B <$> (symbol' "true" $> True <|> symbol' "false" $> False)
           , Bottom <$  (symbol "⊥" <|> symbol' "null")
-          , Set () <$> (symbol' "{" *> (many pExp <* optional (symbol ",")) <* symbol' "}")
-          -- , Map () <$> TODO
+          , SetOrMap () <$> (symbol' "{" *> (many pExp <* optional (symbol ",")) <* symbol' "}")
+          , uncurry Tuple <$> parens ((,) <$> pExp <* symbol "," <*> pExp)
           , Call () <$> (symbol' "call" *> pFLCall)
+          , try $ MapAccess <$> identifier <*> between (symbol "[") (symbol "]") pExp
           , Id () <$> identifier
           ])
   [ [ Prefix (SizeOf <$ symbol "#")

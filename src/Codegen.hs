@@ -227,7 +227,7 @@ genHelperCommon (name, args, argTys) nid sif protoExtends extraBody = do
 -- codegen :: (Identifier, Int) -> Algorithm Typed -> J.CompilationUnit
 -- codegen i = runBabel . translateAlg i
 
-data Scope = UponRequest | UponNotification | UponMessage | Init | Procedure | UponTimer
+data Scope = UponRequest | UponNotification | UponMessage | Init | Procedure | UponTimer | ForeachName | ForeachKey | ForeachValue
 
 pushScope :: (Scope, [Identifier]) -> Babel a -> Babel a
 pushScope = local . first . (:)
@@ -327,18 +327,24 @@ translateTop top = do
 translateStmt :: Statement Typed -> Babel BlockStmt
 translateStmt = para \case
   ExprStatementF e -> BlockStmt . ExpStmt <$> translateExp e
-  AssignF mt i e -> do
+  AssignF mt lhs e -> do
     e' <- translateExp e
     case mt of
       Nothing -> case e of
         -- When we're doing a union, we don't assign the call to add because it returns a boolean
         BOp UNION _ _ -> pure $ BlockStmt $ ExpStmt e'
         BOp DIFFERENCE _ _ -> pure $ BlockStmt $ ExpStmt e'
-        _ -> pure $ BlockStmt $ ExpStmt $ J.Assign (NameLhs $ Name [Ident i]) EqualA e'
-      Just t -> case e of
-        BOp UNION _ _ -> error "undefined union assignment for new local variables"
-        BOp DIFFERENCE _ _ -> error "undefined difference assignment for new local variables"
-        _ -> pure $ LocalVars [] (translateType t) [VarDecl (VarId $ Ident i) (Just $ InitExp e')]
+        _ -> case lhs of
+               IdA i -> pure $ BlockStmt $ ExpStmt $ J.Assign (NameLhs $ Name [Ident i]) EqualA e'
+               MapA i ix -> do
+                 ix' <- translateExp ix
+                 pure $ BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall (fromString i) [] "put" [ix', e']
+      Just t
+        | MapA _ _ <- lhs -> error "impossible assign to new local undefined map"
+        | IdA i <- lhs -> case e of
+          BOp UNION _ _ -> error "undefined union assignment for new local variables"
+          BOp DIFFERENCE _ _ -> error "undefined difference assignment for new local variables"
+          _ -> pure $ LocalVars [] (translateType t) [VarDecl (VarId $ Ident i) (Just $ InitExp e')]
 
   IfF e (unzip -> (_, thenS)) (unzip -> (_, elseS)) -> do
     e' <- translateExp e
@@ -386,9 +392,13 @@ translateStmt = para \case
     -- makeNotification args argTypes'
     -- pure (ExpStmt $ MethodInv $ MethodCall (Name [Ident i]) args')
 
-  ForeachF t name e (unzip -> (_, body)) -> do
+  ForeachF t pat e (unzip -> (_, body)) -> do
     e' <- translateExp e
-    body' <- sequence body
+    (name, body') <- case pat of
+               IdP name -> do
+                 (name,) <$> pushScope (ForeachName, [name]) (sequence body)
+               TupleP name1 name2 -> do
+                 ("entry",) <$> pushScope (ForeachKey, [name1]) (pushScope (ForeachValue, [name2]) (sequence body))
     let t' = translateType t
     pure $ BlockStmt $ EnhancedFor [] t' (Ident name) e' (StmtBlock . Block $ body')
 
@@ -435,26 +445,49 @@ translateExp = para \case
       -- TODO: Only works for sets yet, but should also work for maps.
       Syntax.UNION ->
         case p2 of
-          Set _ [x] -> do
-            x' <- translateExp x
-            pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "add") [x']
-          _ -> do
-            pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "addAll") [e2']
+          SetOrMap t ls
+            | TMap _ _ <- t -> case ls of
+                [Tuple x1 x2] -> do
+                  x1' <- translateExp x1
+                  x2' <- translateExp x2
+                  pure $ MethodInv $ PrimaryMethodCall e1' [] "put" [x1', x2']
+                _ -> pure $ MethodInv $ PrimaryMethodCall e1' [] "putAll" [e2']
+            | TSet _ <- t -> case ls of
+                 [x] -> do
+                   x' <- translateExp x
+                   pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "add") [x']
+                 _ -> pure $ MethodInv $ PrimaryMethodCall e1' [] "addAll" [e2']
+
+          _ -> error "union: impossible"
+
       Syntax.DIFFERENCE ->
         case p2 of
-          Set _ [x] -> do
-            x' <- translateExp x
-            pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "remove") [x']
-          _ -> do
-            pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "removeAll") [e2']
-  SetF t (unzip -> (_, ss)) -> case translateType t of
+          SetOrMap t ls
+            | TMap _ _ <- t
+            -> case ls of
+                [Tuple x1 x2] -> do
+                  x1' <- translateExp x1
+                  x2' <- translateExp x2
+                  pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "remove") [x1']
+                _ ->
+                  pure $ MethodInv $ PrimaryMethodCall (MethodInv $ PrimaryMethodCall e1' [] "keySet" []) [] "removeAll" [e2']
+            | TSet _ <- t
+            -> case ls of
+                 [x] -> do
+                   x' <- translateExp x
+                   pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "remove") [x']
+                 _ ->
+                   pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "removeAll") [e2']
+
+          _ -> error "difference: impossible"
+
+  SetOrMapF t (unzip -> (_, ss)) -> case translateType t of
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of
       [] -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t'])]) [] Nothing
       _ -> do
         ss' <- sequence ss
         pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t'])]) [MethodInv $ TypeMethodCall (Name [Ident "Arrays"]) [] (Ident "asList") ss'] Nothing
-  MapF _ m -> error "Map translate"
   SizeOfF (_, e) -> do
     e' <- e
     pure $ MethodInv $ PrimaryMethodCall e' [] (Ident "size") []
@@ -480,7 +513,10 @@ translateIdentifier i = asks fst >>= pure . trId'
                       UponMessage -> MethodInv $ PrimaryMethodCall (ExpName $ Name [Ident "msg"]) [] (Ident $ "get" <> upperFirst i) []
                       Init -> ExpName $ Name [Ident i]
                       Procedure -> ExpName $ Name [Ident i]
-                      UponTimer -> MethodInv $ PrimaryMethodCall (ExpName $ Name [Ident "timer"]) [] (Ident $ "get" <> upperFirst i) []
+                      UponTimer -> MethodInv $ PrimaryMethodCall (ExpName "timer") [] (Ident $ "get" <> upperFirst i) []
+                      ForeachName -> ExpName "i"
+                      ForeachKey -> MethodInv $ PrimaryMethodCall (ExpName "entry") [] "getKey" []
+                      ForeachValue -> MethodInv $ PrimaryMethodCall (ExpName "entry") [] "getValue" []
 
 translateType :: AType -> Type
 translateType = cata \case
@@ -494,9 +530,10 @@ translateType = cata \case
   TSetF x -> case x of
     PrimType x' -> error $ show x' <> " is not a boxed/Object type"
     RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Set", [ActualType t])]
-  TMapF x -> case x of
-    PrimType x' -> error $ show x' <> " is not a boxed/Object type"
-    RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t])]
+  TMapF x y -> case (x, y) of
+    (RefType t1, RefType t2) -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t1, ActualType t2])]
+    (PrimType x', _) -> error $ show x' <> " is not a boxed/Object type"
+    (_, PrimType y') -> error $ show y' <> " is not a boxed/Object type"
   TFunF _ _ -> error "Fun type"
   TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
   TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]

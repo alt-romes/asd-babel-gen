@@ -64,25 +64,35 @@ data TopDecl p
  | UponTimerD (XUponTimerD p) FLDecl [Statement p]
 
 data Statement p
-  = Assign (XAssign p) Identifier (Expr p)
+  = Assign (XAssign p) (ALhs p) (Expr p)
   | If (Expr p) [Statement p] [Statement p]
   | TriggerSend Identifier [Expr p] -- TODO: Expr p "from" out of list of args
   | Trigger (FLCall p)
   | SetupPeriodicTimer Identifier (Expr p {- period -}) [Expr p]
   | SetupTimer Identifier (Expr p {- period -}) [Expr p]
-  | Foreach (XForeach p) Identifier (Expr p) [Statement p]
+  | Foreach (XForeach p) Pat (Expr p) [Statement p]
   | ExprStatement (Expr p)
+
+data ALhs p
+  = IdA Identifier
+  | MapA Identifier (Expr p)
+
+data Pat
+  = IdP Identifier
+  | TupleP Identifier Identifier
+  deriving Show
 
 data Expr p
   = I Integer
   | B Bool
   | Bottom
-  | Set (XSet p) [Expr p] -- sets; {m}
-  | Map (XMap p) [(Expr p, Expr p)] -- maps; {(m,p)}
+  | Tuple (Expr p) (Expr p)
+  | SetOrMap (XSetOrMap p) [Expr p]
   | Id (XId p) Identifier
-  | SizeOf (Expr p) -- #received
+  | SizeOf (Expr p)                   -- e.g. #received
   | BOp BOp (Expr p) (Expr p)
   | Call (XCall p) (FLCall p)
+  | MapAccess Identifier (Expr p)
 
 -- data UOp
 --   =
@@ -113,13 +123,14 @@ data AType
   | TBool
   | TString
   | TSet AType
-  | TMap AType
+  | TMap AType AType
   | TFun [AType] AType
   | TVar Int
   | TClass Identifier
   | TNull
   | TByte
   | TArray AType
+  | TTuple AType AType
   deriving (Show, Eq)
 
 data Parsed
@@ -132,8 +143,7 @@ type family XUponReceiveD p
 type family XUponTimerD p
 type family XProcedureD  p
 type family XForeach p
-type family XSet p
-type family XMap p
+type family XSetOrMap p
 type family XUnion p
 type family XDifference p
 type family XId p
@@ -158,10 +168,8 @@ type instance XProcedureD Parsed = ()
 type instance XProcedureD Typed = [AType]
 type instance XForeach Parsed = ()
 type instance XForeach Typed  = AType
-type instance XSet Parsed = ()
-type instance XSet Typed = AType
-type instance XMap Parsed = ()
-type instance XMap Typed = AType
+type instance XSetOrMap Parsed = ()
+type instance XSetOrMap Typed = AType
 type instance XSubsetOf Parsed = ()
 type instance XSubsetOf Typed = AType
 type instance XUnion Parsed = ()
@@ -187,6 +195,8 @@ deriving instance Show (InterfaceD Parsed)
 deriving instance Show (InterfaceD Typed)
 deriving instance Show (FLCall Parsed)
 deriving instance Show (FLCall Typed)
+deriving instance Show (ALhs Parsed)
+deriving instance Show (ALhs Typed)
 
 makeBaseFunctor ''Statement
 makeBaseFunctor ''Expr

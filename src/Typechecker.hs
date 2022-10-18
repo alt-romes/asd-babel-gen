@@ -62,6 +62,7 @@ typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
 
 expType :: Expr Typed -> AType
 expType = cata \case
+  TupleF t1 t2 -> TTuple t1 t2
   BottomF -> TNull
   CallF t _ -> t
   IF _ -> TInt
@@ -77,8 +78,7 @@ expType = cata \case
       Syntax.DIFFERENCE -> t1
       Syntax.UNION -> t1
       _       -> TBool
-  SetF t _ -> TSet t
-  MapF _ m -> error "type map"
+  SetOrMapF t _ -> t
   SizeOfF _ -> TInt
     -- TODO: Only works for sets yet, but should also work for maps.
 
@@ -155,13 +155,24 @@ inferStmts (stmt:stmts) = do
   where
   inferStmt :: Statement Parsed -> Infer (Statement Typed, Maybe (Identifier, AType))
   inferStmt = \case
-    Assign _ i e -> do
+    Assign _ lhs e -> do
       (t, e') <- inferExp e
-      findInEnv i >>= \case
-        Nothing -> do
-          -- we don't find this variable in scope, so we create it, and return it: this value will be used to push a scope on the next statements
-          pure (Assign (Just t) i e', Just (i, t))
-        Just it -> constraint it t >> pure (Assign Nothing i e', Nothing)
+      case lhs of
+        IdA i -> do
+          findInEnv i >>= \case
+            Nothing -> do
+              -- we don't find this variable in scope, so we create it, and return it: this value will be used to push a scope on the next statements
+              pure (Assign (Just t) (IdA i) e', Just (i, t))
+            Just it -> constraint it t >> pure (Assign Nothing (IdA i) e', Nothing)
+        MapA i ix -> do
+          (tix, ix') <- inferExp ix
+          findInEnv i >>= \case
+            -- we don't find this variable in scope, but the map should already exist
+            Nothing -> error $ "var not in scope " <> show i
+            Just it -> do
+              constraint it (TMap tix t)
+              pure (Assign Nothing (MapA i ix') e', Nothing)
+
     If e thenS elseS -> do
       (t, e') <- inferExp e
       constraint t TBool
@@ -197,12 +208,19 @@ inferStmts (stmt:stmts) = do
         Just funT -> constraint funT (TFun argTys TVoid)
       pure (SetupPeriodicTimer name timer' args', Nothing)
 
-    Foreach _ name e body -> do
-      nt <- TVar <$> fresh
+    Foreach _ pat e body -> do
       (t, e') <- inferExp e
-      constraint t (TSet nt)
-      bodyT <- pushScope [(name, nt)] $ inferStmts body
-      pure (Foreach nt name e' bodyT, Nothing)
+      (ft, bodyT) <- case pat of
+        IdP name -> do
+          nt <- TVar <$> fresh
+          constraint t (TSet nt)
+          (nt,) <$> pushScope [(name, nt)] (inferStmts body)
+        TupleP name1 name2 -> do
+          nt1 <- TVar <$> fresh
+          nt2 <- TVar <$> fresh
+          constraint t (TMap nt1 nt2)
+          (TTuple nt1 nt2,) <$> pushScope [(name1, nt1), (name2, nt2)] (inferStmts body)
+      pure (Foreach ft pat e' bodyT, Nothing)
 
     ExprStatement e -> (,Nothing) . ExprStatement . snd <$> inferExp e
 
@@ -217,6 +235,10 @@ inferFLCall retType (FLCall name args) = do
 
 inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
 inferExp = cata \case
+  TupleF e1 e2 -> do
+    (t1, e1') <- e1
+    (t2, e2') <- e2
+    pure (TTuple t1 t2, Tuple e1' e2')
   CallF _ flCall -> do
     n <- TVar <$> fresh
     (n,) . Call n <$> inferFLCall n flCall
@@ -257,18 +279,20 @@ inferExp = cata \case
         constraint t1 t3
       Syntax.DIFFERENCE -> constraint t1 t2
     pure (expType (BOp bop e1' e2'), BOp bop e1' e2')
-  SetF _ s -> do
+  SetOrMapF _ s -> do
     s' <- sequence s
     case s' of
       [] -> do
         newTV <- TVar <$> fresh
-        pure (TSet newTV, Set newTV [])
+        pure (newTV, SetOrMap newTV [])
       (t, x):xs -> do
         xs' <- forM xs \(t', x') -> do
                 constraint t' t
                 pure x'
-        pure (TSet t, Set t (x:xs'))
-  MapF _ m -> error "infer map"
+        let setOrMap = case t of
+                         TTuple t1 t2 -> TMap t1 t2
+                         t' -> TSet t'
+        pure (setOrMap, SetOrMap setOrMap (x:xs'))
   SizeOfF e -> do
     (t, e') <- e
     n <- TVar <$> fresh
@@ -320,7 +344,7 @@ unifies a b = case (a, b) of
   (TVar v, t) -> v `bind` t
   (t, TVar v) -> v `bind` t
   (TSet t1, TSet t2) -> unifies t1 t2
-  (TMap t1, TMap t2) -> unifies t1 t2
+  (TMap t1 t3, TMap t2 t4) -> unifies t1 t2 *> unifies t3 t4
   (TFun ts1 x, TFun ts2 y) -> unifies x y *> unifyMany ts1 ts2
   (t1, t2) -> if t1 == t2 then pure mempty else throwError $ UnificationFail t1 t2
 
@@ -349,13 +373,14 @@ class Substitutable a where
 
 instance Substitutable AType where
   applySubst s = cata \case
+    TTupleF t1 t2 -> TTuple t1 t2
     TVoidF -> TVoid
     TIntF -> TInt
     TByteF -> TByte
     TBoolF -> TBool
     TStringF -> TString
     TSetF t -> TSet t
-    TMapF t -> TMap t
+    TMapF t1 t2 -> TMap t1 t2
     TFunF ts x -> TFun ts x
     TClassF n -> TClass n
     TVarF i -> M.findWithDefault (TVar i) i s
@@ -363,6 +388,7 @@ instance Substitutable AType where
     TArrayF x -> TArray x
 
   ftv = cata \case
+    TTupleF t1 t2 -> t1 <> t2
     TIntF -> mempty
     TVoidF -> mempty
     TBoolF -> mempty
@@ -370,7 +396,7 @@ instance Substitutable AType where
     TByteF -> mempty
     TArrayF t -> t
     TSetF t -> t
-    TMapF t -> t
+    TMapF t1 t2 -> t1 <> t2
     TFunF ts x -> mconcat ts <> x
     TClassF _ -> mempty
     TVarF i -> S.singleton i
@@ -438,9 +464,9 @@ instance Substitutable (FLCall Typed) where
 
 instance Substitutable (Expr Typed) where
   applySubst s = cata \case
+    TupleF e f -> Tuple e f
     CallF t flc -> Call (applySubst s t) $ applySubst s flc
-    SetF t n -> Set (applySubst s t) n
-    MapF t n -> Map (applySubst s t) n
+    SetOrMapF t n -> SetOrMap (applySubst s t) n
     BOpF bop e f -> BOp bop e f
     IF x -> I x
     BF x -> B x
@@ -450,10 +476,10 @@ instance Substitutable (Expr Typed) where
 
   ftv = cata \case
     CallF t fl    -> ftv t <> ftv fl
-    SetF t e -> ftv t <> mconcat e
-    MapF t e -> error "Map"
+    SetOrMapF t e -> ftv t <> mconcat e
     BOpF _ e f -> e <> f
     SizeOfF x -> x
+    TupleF e f -> e <> f
     _ -> mempty
 
 -- Util
