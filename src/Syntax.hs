@@ -80,17 +80,14 @@ data Expr p
   | Set (XSet p) [Expr p] -- sets; {m}
   | Map (XMap p) [(Expr p, Expr p)] -- maps; {(m,p)}
   | Id (XId p) Identifier
-  | In (Expr p) (Expr p)
-  | NotIn (Expr p) (Expr p)
-  | Union (XUnion p) (Expr p) (Expr p)
-  | Difference (XDifference p) (Expr p) (Expr p)
   | SizeOf (Expr p) -- #received
   | BOp BOp (Expr p) (Expr p)
   | Call (XCall p) (FLCall p)
 
+-- data UOp
+--   =
+
 data BOp
-  -- = In
-  -- | NotIn
   = EQ
   | NE
   | GE
@@ -104,6 +101,10 @@ data BOp
   | MUL
   | DIV
   | SUBSETEQ
+  | IN
+  | NOTIN
+  | UNION
+  | DIFFERENCE
   deriving Show
 
 data AType

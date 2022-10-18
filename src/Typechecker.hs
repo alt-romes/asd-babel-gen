@@ -67,20 +67,18 @@ expType = cata \case
   IF _ -> TInt
   BF _ -> TBool
   IdF t _ -> t
-  InF _ _ -> TBool
-  NotInF _ _ -> TBool
-  BOpF bop _ _ ->
+  BOpF bop t1 _ ->
     case bop of
       Syntax.ADD -> TInt 
       Syntax.MINUS -> TInt 
       Syntax.MUL -> TInt 
       Syntax.DIV -> TInt 
+      -- TODO: next 2 Only works for sets yet, but should also work for maps.
+      Syntax.DIFFERENCE -> t1
+      Syntax.UNION -> t1
       _       -> TBool
   SetF t _ -> TSet t
   MapF _ m -> error "type map"
-  UnionF t _ _ -> TSet t
-    -- TODO: Only works for sets yet, but should also work for maps.
-  DifferenceF t _ _ -> TSet t
   SizeOfF _ -> TInt
     -- TODO: Only works for sets yet, but should also work for maps.
 
@@ -228,18 +226,6 @@ inferExp = cata \case
   IdF _ i -> findInEnv i >>= \case
     Nothing -> error $ "Couldn't find id " <> i
     Just t -> pure (t, Id t i) 
-  InF e1 e2 -> do
-    (t1, e1') <- e1
-    (t2, e2') <- e2
-    constraint t2 (TSet t1)
-    pure (TBool, In e1' e2')
-    -- TODO: Map
-  NotInF e1 e2 -> do
-    (t1, e1') <- e1
-    (t2, e2') <- e2
-    constraint t2 (TSet t1)
-    pure (TBool, NotIn e1' e2')
-    -- TODO: Map
   BOpF bop e1 e2 -> do
     (t1, e1') <- e1
     (t2, e2') <- e2
@@ -260,6 +246,16 @@ inferExp = cata \case
       Syntax.GT -> constraint t1 TInt <* constraint t2 TInt
       Syntax.AND -> constraint t1 TBool <* constraint t2 TBool
       Syntax.OR  -> constraint t1 TBool <* constraint t2 TBool
+      -- TODO: Map
+      Syntax.IN  -> constraint t2 (TSet t1)
+      Syntax.NOTIN -> constraint t2 (TSet t1)
+      -- TODO: Only works for sets yet, but should also work for maps.
+      -- TODO: Constraint set or map
+      Syntax.UNION -> do
+        t3 <- TSet . TVar <$> fresh
+        constraint t1 t2
+        constraint t1 t3
+      Syntax.DIFFERENCE -> constraint t1 t2
     pure (expType (BOp bop e1' e2'), BOp bop e1' e2')
   SetF _ s -> do
     s' <- sequence s
@@ -273,20 +269,6 @@ inferExp = cata \case
                 pure x'
         pure (TSet t, Set t (x:xs'))
   MapF _ m -> error "infer map"
-  UnionF _ e1 e2 -> do
-    -- TODO: Only works for sets yet, but should also work for maps.
-    (t1, e1') <- e1
-    (t2, e2') <- e2
-    constraint t1 t2
-    -- TODO: Constraint to set or map
-    pure (t1, Union t1 e1' e2')
-  DifferenceF _ e1 e2 -> do
-    -- TODO: Only works for sets yet, but should also work for maps.
-    (t1, e1') <- e1
-    (t2, e2') <- e2
-    constraint t1 t2
-    -- TODO: Constraint to set or map
-    pure (t1, Difference t1 e1' e2')
   SizeOfF e -> do
     (t, e') <- e
     n <- TVar <$> fresh
@@ -459,10 +441,6 @@ instance Substitutable (Expr Typed) where
     CallF t flc -> Call (applySubst s t) $ applySubst s flc
     SetF t n -> Set (applySubst s t) n
     MapF t n -> Map (applySubst s t) n
-    UnionF t e f -> Union (applySubst s t) e f
-    DifferenceF t e f -> Difference (applySubst s t) e f
-    InF e f -> In e f
-    NotInF e f -> NotIn e f
     BOpF bop e f -> BOp bop e f
     IF x -> I x
     BF x -> B x
@@ -474,10 +452,6 @@ instance Substitutable (Expr Typed) where
     CallF t fl    -> ftv t <> ftv fl
     SetF t e -> ftv t <> mconcat e
     MapF t e -> error "Map"
-    UnionF t e f -> ftv t <> e <> f
-    DifferenceF t e f -> ftv t <> e <> f
-    InF e f -> e <> f
-    NotInF e f -> e <> f
     BOpF _ e f -> e <> f
     SizeOfF x -> x
     _ -> mempty

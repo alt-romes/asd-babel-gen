@@ -119,11 +119,11 @@ pExp = makeExprParser
           ])
   [ [ Prefix (SizeOf <$ symbol "#")
     ]
-  , [ binary "U" (Union ())
-    , binary "\\" (Difference ())
+  , [ binary "U" (BOp Syntax.UNION)
+    , binary "\\" (BOp Syntax.DIFFERENCE)
     ]
-  , [ InfixL (In <$ (symbol "∈" <|> symbol' "in"))
-    , InfixL (NotIn <$ (symbol "∉" <|> (symbol' "not" <* symbol' "in")))
+  , [ InfixL (BOp Syntax.IN <$ (symbol "∈" <|> symbol' "in"))
+    , InfixL (BOp Syntax.NOTIN <$ (symbol "∉" <|> (symbol' "not" <* symbol' "in")))
     , InfixL (BOp Syntax.SUBSETEQ <$ (symbol "⊆" <|> (symbol' "subset" <* symbol' "of")))
     , binary "+" (BOp Syntax.ADD)
     , binary "-" (BOp Syntax.MINUS)

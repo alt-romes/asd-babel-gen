@@ -130,14 +130,14 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
                         [BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeBytes" [nameExp]]
                     ]
 
-    TClass ('U':'n':'k':'n':'o':'w':'n':_) -> error "Can't serialize unknown variables!"
+    TVar x -> error $ "Can't serialize unknown variables! " <> show (mname, x)
 
     t -> error $ "Don't know how to serialize " <> show mname <> " " <> show t
 
     where
       nameExp :: Exp
       nameExp = case mname of
-                  Just name -> MethodInv $ PrimaryMethodCall "msg" [] (Ident $ "get" <> upperFirst name) []
+                  Just n' -> MethodInv $ PrimaryMethodCall "msg" [] (Ident $ "get" <> upperFirst n') []
                   Nothing   -> "x"
 
   deserialT :: Int -> Maybe Identifier -> AType -> ([BlockStmt], Exp)
@@ -149,26 +149,26 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
             Just n' -> ([LocalVars [] (PrimType IntT) [VarDecl (VarId $ fromString n') $ Just $ InitExp ep]], fromString n')
     TSet t -> let (bs, recE) = deserialT (it+1) Nothing t in
       ([ BlockStmt $ ExpStmt $ J.Assign (NameLhs "size") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readInt" []
-       , LocalVars [] (translateType (TSet t)) [VarDecl (VarId $ Ident name) (Just $ InitExp $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType $ let RefType r = translateType t in r])]) [ExpName "size", Lit $ Int 1] Nothing)]
+       , LocalVars [] (translateType (TSet t)) [VarDecl (VarId $ Ident name') (Just $ InitExp $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType $ let RefType r = translateType t in r])]) [ExpName "size", Lit $ Int 1] Nothing)]
        , BlockStmt $ BasicFor (Just $ ForLocalVars [] (PrimType IntT) [VarDecl (VarId $ Ident [alphalist !! it]) (Just $ InitExp $ Lit $ Int 0)])
                              (Just $ BinOp (fromString [alphalist !! it]) LThan "size")
                              (Just $ [PostIncrement (fromString [alphalist !! it])])
-                             (StmtBlock $ Block $ bs <> [BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall (fromString name) [] "add" [recE]])
-      ], fromString name)
+                             (StmtBlock $ Block $ bs <> [BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall (fromString name') [] "add" [recE]])
+      ], fromString name')
     TClass "Host" ->
       let ep = MethodInv $ TypeMethodCall (Name ["Host","serializer"]) [] "deserialize" ["in"] in
       case mname of
         Nothing -> ([],ep)
-        Just n' -> ([LocalVars [] (translateType (TClass "Host")) [VarDecl (VarId $ fromString name) $ Just $ InitExp ep]], fromString n')
+        Just n' -> ([LocalVars [] (translateType (TClass "Host")) [VarDecl (VarId $ fromString name') $ Just $ InitExp ep]], fromString n')
 
     TClass "UUID" ->
       let common = [ BlockStmt $ ExpStmt $ J.Assign (NameLhs "firstLong") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readLong" []
                    , BlockStmt $ ExpStmt $ J.Assign (NameLhs "secondLong") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readLong" []
                    ]
-          exp = InstanceCreation [] (TypeDeclSpecifier $ ClassType [("UUID",[])]) ["firstLong", "secondLong"] Nothing
+          ep = InstanceCreation [] (TypeDeclSpecifier $ ClassType [("UUID",[])]) ["firstLong", "secondLong"] Nothing
        in case mname of
-        Nothing -> (common, exp)
-        Just n' -> (common <> [LocalVars [] (translateType (TClass "UUID")) [VarDecl (VarId $ fromString n') $ Just $ InitExp exp]], fromString n')
+        Nothing -> (common, ep)
+        Just n' -> (common <> [LocalVars [] (translateType (TClass "UUID")) [VarDecl (VarId $ fromString n') $ Just $ InitExp ep]], fromString n')
 
     TArray TByte ->
       let
@@ -184,7 +184,7 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
 
     t -> error $ "Don't know how to serialize " <> show mname <> " " <> show t
     where
-      name = case mname of Nothing -> error "deserialize shouldn't try to use a name when it doesn't need one"; Just n -> n
+      name' = case mname of Nothing -> error "deserialize shouldn't try to use a name when it doesn't need one"; Just n -> n
       alphalist = ['a'..]
 
 
@@ -332,12 +332,12 @@ translateStmt = para \case
     case mt of
       Nothing -> case e of
         -- When we're doing a union, we don't assign the call to add because it returns a boolean
-        Union {} -> pure $ BlockStmt $ ExpStmt e'
-        Difference {} -> pure $ BlockStmt $ ExpStmt e'
+        BOp UNION _ _ -> pure $ BlockStmt $ ExpStmt e'
+        BOp DIFFERENCE _ _ -> pure $ BlockStmt $ ExpStmt e'
         _ -> pure $ BlockStmt $ ExpStmt $ J.Assign (NameLhs $ Name [Ident i]) EqualA e'
       Just t -> case e of
-        Union {} -> error "undefined union assignment for new local variables"
-        Difference {} -> error "undefined difference assignment for new local variables"
+        BOp UNION _ _ -> error "undefined union assignment for new local variables"
+        BOp DIFFERENCE _ _ -> error "undefined difference assignment for new local variables"
         _ -> pure $ LocalVars [] (translateType t) [VarDecl (VarId $ Ident i) (Just $ InitExp e')]
 
   IfF e (unzip -> (_, thenS)) (unzip -> (_, elseS)) -> do
@@ -399,14 +399,6 @@ translateExp = para \case
   BF b -> pure $ Lit $ Boolean b
   BottomF -> pure $ Lit Null
   IdF _ i -> translateIdentifier i
-  InF (_, e1) (_, e2) -> do
-    e1' <- e1
-    e2' <- e2
-    pure $ MethodInv $ PrimaryMethodCall e2' [] (Ident "contains") [e1']
-  NotInF (_, e1) (_, e2) -> do
-    e1' <- e1
-    e2' <- e2
-    pure $ PreNot $ MethodInv $ PrimaryMethodCall e2' [] (Ident "contains") [e1']
   BOpF bop (p1, e1) (p2, e2) -> do
     e1' <- e1
     e2' <- e2
@@ -438,6 +430,23 @@ translateExp = para \case
       Syntax.MUL  -> pure $ BinOp e1' Mult e2'
       Syntax.DIV  -> pure $ BinOp e1' Div e2'
       Syntax.SUBSETEQ -> pure $ MethodInv $ PrimaryMethodCall e2' [] (Ident "containsAll") [e1']
+      Syntax.IN -> pure $ MethodInv $ PrimaryMethodCall e2' [] (Ident "contains") [e1']
+      Syntax.NOTIN -> pure $ PreNot $ MethodInv $ PrimaryMethodCall e2' [] (Ident "contains") [e1']
+      -- TODO: Only works for sets yet, but should also work for maps.
+      Syntax.UNION ->
+        case p2 of
+          Set _ [x] -> do
+            x' <- translateExp x
+            pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "add") [x']
+          _ -> do
+            pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "addAll") [e2']
+      Syntax.DIFFERENCE ->
+        case p2 of
+          Set _ [x] -> do
+            x' <- translateExp x
+            pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "remove") [x']
+          _ -> do
+            pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "removeAll") [e2']
   SetF t (unzip -> (_, ss)) -> case translateType t of
     PrimType _ -> error "PrimType (Non-RefType) Set"
     RefType t' -> case ss of
@@ -446,26 +455,6 @@ translateExp = para \case
         ss' <- sequence ss
         pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t'])]) [MethodInv $ TypeMethodCall (Name [Ident "Arrays"]) [] (Ident "asList") ss'] Nothing
   MapF _ m -> error "Map translate"
-  UnionF t (_, e1) (p2, e2) -> do
-    -- TODO: Only works for sets yet, but should also work for maps.
-    e1' <- e1
-    case p2 of
-      Set _ [x] -> do
-        x' <- translateExp x
-        pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "add") [x']
-      _ -> do
-        e2' <- e2
-        pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "addAll") [e2']
-  DifferenceF t (_, e1) (p2, e2) -> do
-    -- TODO: Only works for sets yet, but should also work for maps.
-    e1' <- e1
-    case p2 of
-      Set _ [x] -> do
-        x' <- translateExp x
-        pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "remove") [x']
-      _ -> do
-        e2' <- e2
-        pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "removeAll") [e2']
   SizeOfF (_, e) -> do
     e' <- e
     pure $ MethodInv $ PrimaryMethodCall e' [] (Ident "size") []
