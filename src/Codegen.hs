@@ -517,26 +517,15 @@ translateExp = para \case
     case ss of
       [] -> 
         case t of
-          TSet t' -> case translateType t' of
-                       PrimType IntT -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType integerType])]) [] Nothing
-                       PrimType _ -> error "primtype"
-                       RefType t'' -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t''])]) [] Nothing
-          TMap t1 t2 -> case (translateType t1, translateType t2) of
-                          (PrimType IntT, PrimType IntT) -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType integerType, ActualType integerType])]) [] Nothing
-                          (PrimType IntT, RefType t2') -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType integerType, ActualType t2'])]) [] Nothing
-                          (RefType t1', PrimType IntT) -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType t1', ActualType integerType])]) [] Nothing
-                          (RefType t1', RefType t2') -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType t1', ActualType t2'])]) [] Nothing
-                          _ -> error "hashmap primtype err"
+          TSet t' -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType $ getRefTypeFrom $ translateType t'])]) [] Nothing
+          TMap t1 t2 -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType $ getRefTypeFrom $ translateType t1, ActualType $ getRefTypeFrom $ translateType t2])]) [] Nothing
           TVar _ -> error "empty set or map type not specific enough"
           x -> error $ "ops"
       _ -> do
         ss' <- sequence ss
         case t of
-          TSet t' -> case translateType t' of
-                       PrimType IntT -> error "todo:"
-                       PrimType _ -> error "primtype"
-                       RefType t'' -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t''])]) [MethodInv $ TypeMethodCall (Name [Ident "Arrays"]) [] (Ident "asList") ss'] Nothing
-          TMap t1 t2 -> pure "Todo: Map literal with mutliple itmes"
+          TSet t' -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType $ getRefTypeFrom $ translateType t'])]) [MethodInv $ TypeMethodCall (Name [Ident "Arrays"]) [] (Ident "asList") ss'] Nothing
+          TMap t1 t2 -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType $ getRefTypeFrom $ translateType t1, ActualType $ getRefTypeFrom $ translateType t2])]) ["TODO FROM MANY MAP"] Nothing
 
           _ -> error "ops"
   SizeOfF (_, e) -> do
@@ -571,14 +560,7 @@ translateIdentifier i = asks fst >>= pure . trId'
 
 translateType :: AType -> Type
 translateType = cata \case
-  TTupleF t1 t2 -> 
-    case (t1, t2) of
-      (RefType t1', RefType t2') -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType t1', ActualType t2'])]
-      (PrimType IntT, RefType t2') -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType integerType, ActualType t2'])]
-      (RefType t1', PrimType IntT) -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType t1', ActualType integerType])]
-      (PrimType IntT, PrimType IntT) -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType integerType, ActualType integerType])]
-      (PrimType x', _) -> error $ show x' <> " is not a boxed/Object type | TTupple fst"
-      (_, PrimType y') -> error $ show y' <> " is not a boxed/Object type | TTuple snd"
+  TTupleF t1 t2 -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType $ getRefTypeFrom t1, ActualType $ getRefTypeFrom t2])]
   TVoidF -> error "void type"
   TNullF -> RefType $ ClassRefType $ ClassType []
   TIntF -> PrimType IntT
@@ -586,27 +568,20 @@ translateType = cata \case
   TArrayF t -> RefType $ ArrayType t
   TBoolF -> PrimType BooleanT
   TStringF -> stringType
-  TSetF x -> case x of
-    PrimType x' -> case x' of
-                     IntT -> RefType integerType
-                     _ -> error $ show x' <> " is not a boxed/Object type"
-    RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Set", [ActualType t])]
-  TMapF x y -> case (x, y) of
-    (RefType t1, RefType t2) -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t1, ActualType t2])]
-    (PrimType x', _) -> case x' of
-                          -- make intT -> Integer
-                          IntT -> RefType integerType
-                          _ -> error $ show x' <> " is not a boxed/Object type"
-    (_, PrimType y') -> case y' of
-                          IntT -> RefType integerType
-                          _ -> error $ show y' <> " is not a boxed/Object type"
+  TSetF x -> RefType $ ClassRefType $ ClassType [(Ident "Set", [ActualType $ getRefTypeFrom x])]
 
+  TMapF x y -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType $ getRefTypeFrom x, ActualType $ getRefTypeFrom y])]
   TFunF _ _ -> error "Fun type"
   TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
   TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
 
-integerType :: RefType
-integerType = ClassRefType $ ClassType [(Ident "Integer", [])]
+getRefTypeFrom :: Type -> RefType
+getRefTypeFrom = \case
+    PrimType x' -> case x' of
+                     IntT -> ClassRefType $ ClassType [(Ident "Integer", [])]
+                     BooleanT -> ClassRefType $ ClassType [("Boolean", [])]
+                     _ -> error $ show x' <> " is not a boxed/Object type"
+    RefType t  -> t
 
 classRefType :: Identifier -> Type
 classRefType i = RefType $ ClassRefType $ ClassType [(Ident i, [])]
