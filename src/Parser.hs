@@ -81,17 +81,19 @@ pTopDecl = choice
 
 
 pDo :: Parser ()
-pDo = () <$ optional (symbol "do") <* optional (symbol ":")
+pDo = () <$ optional (symbol' "do") <* optional (symbol ":")
 
 pStatement :: Parser (Statement Parsed)
 pStatement = choice
   [ pIf
   , pForeach
+  , pWhile
   , try (symbol' "setup" *> symbol' "periodic") *> symbol' "timer" $> uncurry . SetupPeriodicTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
   , symbol' "setup" *> symbol' "timer" $> uncurry . SetupTimer <*> identifier <*> parens((,) <$> pExp <* optional (symbol ",") <*> argsExp)
   , symbol' "cancel" *> symbol' "timer" $> CancelTimer <*> pFLCall
   , try (symbol' "trigger" *> symbol' "send") $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp)
   , symbol' "trigger" $> Trigger <*> pFLCall
+  , symbol' "return" $> ReturnE <*> pExp
   , try $ Assign () <$> pLhs <* symbol "<-" <*> pExp
   , ExprStatement <$> pExp
   ]
@@ -115,8 +117,13 @@ pStatement = choice
 
     pForeach :: Parser (Statement Parsed)
     pForeach = indentBlock do
-      (name, iterable) <- symbol' "foreach" $> (,) <*> pPat <* (symbol "∈" <|> symbol' "in") <*> pExp <* symbol "do" <* optional (symbol ":")
+      (name, iterable) <- (try (symbol' "foreach") <|> symbol' "for") $> (,) <*> pPat <* (symbol "∈" <|> symbol' "in") <*> pExp <* pDo
       pure $ L.IndentMany Nothing (pure . Foreach () name iterable) pStatement
+
+    pWhile :: Parser (Statement Parsed)
+    pWhile = indentBlock do
+      ep <- symbol' "while" *> pExp <* pDo
+      pure $ L.IndentMany Nothing (pure . While ep) pStatement
 
 pPat :: Parser Pat
 pPat = uncurry TupleP <$> parens ((,) <$> identifier <* symbol "," <*> identifier)
@@ -124,13 +131,15 @@ pPat = uncurry TupleP <$> parens ((,) <$> identifier <* symbol "," <*> identifie
 
 pExp :: Parser (Expr Parsed)
 pExp = makeExprParser
-  (choice [ I <$> integer
+  (choice [ try $ parens pExp
+          , I <$> integer
           , B <$> (symbol' "true" $> True <|> symbol' "false" $> False)
           , Bottom <$  (symbol "⊥" <|> symbol' "null")
           , SetOrMap () <$> (symbol' "{" *> (many pExp <* optional (symbol ",")) <* symbol' "}")
           , uncurry Tuple <$> parens ((,) <$> pExp <* symbol "," <*> pExp)
           , Call () <$> (symbol' "call" *> pFLCall)
           , try $ MapAccess () <$> identifier <*> between (symbol "[") (symbol "]") pExp
+          , symbol "!" $> NotE <*> pExp
           , Id () <$> identifier
           ])
   [ [ Prefix (SizeOf <$ symbol "#")
@@ -209,4 +218,4 @@ integer :: Parser Integer
 integer = lexeme L.decimal
 
 identifier :: Parser String
-identifier = lexeme (takeWhile1P (Just "alpha num identifier") C.isAlphaNum)
+identifier = lexeme (takeWhile1P (Just "alpha num identifier") (\x -> C.isAlphaNum x || x == '_'))

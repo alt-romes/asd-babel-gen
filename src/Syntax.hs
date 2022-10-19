@@ -72,7 +72,9 @@ data Statement p
   | SetupTimer Identifier (Expr p {- period -}) [Expr p]
   | CancelTimer (FLCall p)
   | Foreach (XForeach p) Pat (Expr p) [Statement p]
+  | While (Expr p) [Statement p]
   | ExprStatement (Expr p)
+  | ReturnE (Expr p)
 
 data ALhs p
   = IdA Identifier
@@ -91,6 +93,7 @@ data Expr p
   | SetOrMap (XSetOrMap p) [Expr p]
   | Id (XId p) Identifier
   | SizeOf (Expr p)                   -- e.g. #received
+  | NotE (Expr p)
   | BOp BOp (Expr p) (Expr p)
   | Call (XCall p) (FLCall p)
   | MapAccess (XMapAccess p) Identifier (Expr p)

@@ -62,6 +62,7 @@ typecheckProtocols ps = case evalRWS m mempty (Uniq 0) of
 
 expType :: Expr Typed -> AType
 expType = cata \case
+  NotEF _ -> TBool
   MapAccessF t2 _ _ -> t2
   TupleF t1 t2 -> TTuple t1 t2
   BottomF -> TNull
@@ -224,7 +225,15 @@ inferStmts (stmt:stmts) = do
           (TTuple nt1 nt2,) <$> pushScope [(name1, nt1), (name2, nt2)] (inferStmts body)
       pure (Foreach ft pat e' bodyT, Nothing)
 
+    While e body -> do
+      (_, e') <- inferExp e
+      bodyT   <- inferStmts body
+      pure (While e' bodyT, Nothing)
+
     ExprStatement e -> (,Nothing) . ExprStatement . snd <$> inferExp e
+    ReturnE e -> do
+      -- TODO: Constraint to return type of most recent upon block
+      (,Nothing) . ReturnE . snd <$> inferExp e
 
 inferFLCall :: AType -> FLCall Parsed -> Infer (FLCall Typed)
 inferFLCall retType (FLCall name args) = do
@@ -237,6 +246,10 @@ inferFLCall retType (FLCall name args) = do
 
 inferExp :: Expr Parsed -> Infer (AType, Expr Typed)
 inferExp = cata \case
+  NotEF e -> do
+    (t, e') <- e
+    constraint t TBool
+    pure (TBool, NotE e')
   MapAccessF _ i e -> do
     (t, e') <- e
     findInEnv i >>= \case
@@ -455,7 +468,9 @@ instance Substitutable (Statement Typed) where
     SetupPeriodicTimerF n t args -> SetupPeriodicTimer n (applySubst s t) (applySubst s args)
     SetupTimerF n t args -> SetupPeriodicTimer n (applySubst s t) (applySubst s args)
     ForeachF tv i e stmts -> Foreach (applySubst s tv) i (applySubst s e) stmts
+    WhileF e stmts -> While (applySubst s e) stmts
     ExprStatementF x -> ExprStatement (applySubst s x)
+    ReturnEF e -> ReturnE (applySubst s e)
   ftv = cata \case
     CancelTimerF flc -> ftv flc
     AssignF t _ _ -> ftv t
@@ -464,8 +479,10 @@ instance Substitutable (Statement Typed) where
     SetupPeriodicTimerF _ t args -> ftv t <> ftv args
     SetupTimerF _ t args -> ftv t <> ftv args
     TriggerSendF _ e -> ftv e
-    ForeachF tv _ _ stmts -> ftv tv <> mconcat stmts
+    ForeachF tv _ e stmts -> ftv tv <> ftv e <> mconcat stmts
+    WhileF e stmts -> ftv e <> mconcat stmts
     ExprStatementF x -> ftv x
+    ReturnEF e -> ftv e
 
 instance Substitutable (FLCall Typed) where
   applySubst s (FLCall name args) = FLCall name $ applySubst s args
@@ -473,6 +490,7 @@ instance Substitutable (FLCall Typed) where
 
 instance Substitutable (Expr Typed) where
   applySubst s = cata \case
+    NotEF e -> NotE e
     MapAccessF t2 e f -> MapAccess (applySubst s t2) e f
     TupleF e f -> Tuple e f
     CallF t flc -> Call (applySubst s t) $ applySubst s flc
@@ -488,6 +506,7 @@ instance Substitutable (Expr Typed) where
     MapAccessF t2 _ _ -> ftv t2
     CallF t fl    -> ftv t <> ftv fl
     SetOrMapF t e -> ftv t <> mconcat e
+    NotEF e -> e
     BOpF _ e f -> e <> f
     SizeOfF x -> x
     TupleF e f -> e <> f

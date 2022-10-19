@@ -333,6 +333,7 @@ translateTop top = do
 
 translateStmt :: Statement Typed -> Babel BlockStmt
 translateStmt = para \case
+  ReturnEF e -> BlockStmt . Return . Just <$> translateExp e
   ExprStatementF e -> BlockStmt . ExpStmt <$> translateExp e
   AssignF mt lhs e -> do
     e' <- translateExp e
@@ -413,10 +414,15 @@ translateStmt = para \case
                 _ -> e'
     pure $ BlockStmt $ EnhancedFor [] t' (Ident name) e'' (StmtBlock . Block $ body')
 
+  WhileF e (unzip -> (_, body)) -> do
+    e' <- translateExp e
+    body' <- sequence body
+    pure $ BlockStmt $ J.While e' (StmtBlock $ Block body')
 
 translateExp :: Expr Typed -> Babel Exp
 translateExp = para \case
   TupleF a b -> pure $ "Tuple value TODO"
+  NotEF (_, e) -> PreNot <$> e
   MapAccessF _ i (_, ix) -> do
     i' <- translateIdentifier i
     ix' <- ix
@@ -521,7 +527,8 @@ translateExp = para \case
                           (RefType t1', PrimType IntT) -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType t1', ActualType integerType])]) [] Nothing
                           (RefType t1', RefType t2') -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType t1', ActualType t2'])]) [] Nothing
                           _ -> error "hashmap primtype err"
-          _ -> error "ops"
+          TVar _ -> error "empty set or map type not specific enough"
+          x -> error $ "ops"
       _ -> do
         ss' <- sequence ss
         case t of
