@@ -130,6 +130,8 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
                         [BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall "out" [] "writeBytes" [nameExp]]
                     ]
 
+    TMap _ _ -> [ BlockStmt $ ExpStmt "TODO:TMap Serial"]
+
     TVar x -> error $ "Can't serialize unknown variables! " <> show (mname, x)
 
     t -> error $ "Don't know how to serialize " <> show mname <> " " <> show t
@@ -171,16 +173,21 @@ genMessage (name, unzip -> (args, argTys)) i = genHelperCommon (name,args,argTys
         Just n' -> (common <> [LocalVars [] (translateType (TClass "UUID")) [VarDecl (VarId $ fromString n') $ Just $ InitExp ep]], fromString n')
 
     TArray TByte ->
-      let
-       in case mname of
-            Nothing -> error "how to recurse something that has a byte[]?"
-            Just n' ->
-              ([ BlockStmt $ ExpStmt $ J.Assign (NameLhs "size") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readInt" []
-               , LocalVars [] (PrimType ByteT) [VarDecl (VarId $ fromString n') $ Just $ InitExp $ ArrayCreate (PrimType ByteT) ["size"] 0]
-               , BlockStmt $ IfThen (BinOp "size" GThan (Lit $ Int 0)) $ ExpStmt $ MethodInv $ PrimaryMethodCall "in" [] "readBytes" [fromString n']
-               ], fromString n')
+       case mname of
+          Nothing -> error "how to recurse something that has a byte[]?"
+          Just n' ->
+            ([ BlockStmt $ ExpStmt $ J.Assign (NameLhs "size") EqualA $ MethodInv $ PrimaryMethodCall "in" [] "readInt" []
+             , LocalVars [] (PrimType ByteT) [VarDecl (VarId $ fromString n') $ Just $ InitExp $ ArrayCreate (PrimType ByteT) ["size"] 0]
+             , BlockStmt $ IfThen (BinOp "size" GThan (Lit $ Int 0)) $ ExpStmt $ MethodInv $ PrimaryMethodCall "in" [] "readBytes" [fromString n']
+             ], fromString n')
 
-    TClass ('U':'n':'k':'n':'o':'w':'n':_) -> error "Can't serialize unknown variables!"
+    TMap _ _ ->
+      let ep = "TODO:TMap Deserial"
+       in case mname of
+          Nothing -> ([], ep)
+          Just n' -> ([ BlockStmt $ ExpStmt ep], fromString n')
+
+    TVar x -> error $ "Can't serialize unknown variables! " <> show (mname, x)
 
     t -> error $ "Don't know how to serialize " <> show mname <> " " <> show t
     where
@@ -373,6 +380,7 @@ translateStmt = para \case
     argsExps <- mapM translateExp args
     pure $ BlockStmt $ ExpStmt $ MethodInv $ MethodCall (Name [Ident "setupTimer"]) [InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident $ upperFirst name,[])]) argsExps Nothing, BinOp timerExp Mult (Lit (Int 1000))]
 
+  CancelTimerF _ -> pure $ BlockStmt $ ExpStmt $ MethodInv $ PrimaryMethodCall This [] "cancelTimer" ["todo save timer id and cancel it"]
   TriggerF (FLCall name args) -> do
     (requests, indications) <- asks (bimap (map (\(FLDecl n _) -> n)) (map (\(FLDecl n _) -> n)) . snd)
     argsExps <- mapM translateExp args
@@ -400,11 +408,19 @@ translateStmt = para \case
                TupleP name1 name2 -> do
                  ("entry",) <$> pushScope (ForeachKey, [name1]) (pushScope (ForeachValue, [name2]) (sequence body))
     let t' = translateType t
-    pure $ BlockStmt $ EnhancedFor [] t' (Ident name) e' (StmtBlock . Block $ body')
+        e'' = case t of
+                TTuple _ _ -> MethodInv $ PrimaryMethodCall e' [] "entrySet" []
+                _ -> e'
+    pure $ BlockStmt $ EnhancedFor [] t' (Ident name) e'' (StmtBlock . Block $ body')
 
 
 translateExp :: Expr Typed -> Babel Exp
 translateExp = para \case
+  TupleF a b -> pure $ "Tuple value TODO"
+  MapAccessF _ i (_, ix) -> do
+    i' <- translateIdentifier i
+    ix' <- ix
+    pure $ MethodInv $ PrimaryMethodCall i' [] "get" [ix']
   IF i -> pure $ Lit $ Int i
   BF b -> pure $ Lit $ Boolean b
   BottomF -> pure $ Lit Null
@@ -458,6 +474,11 @@ translateExp = para \case
                    pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "add") [x']
                  _ -> pure $ MethodInv $ PrimaryMethodCall e1' [] "addAll" [e2']
 
+          Id (TSet _) i ->
+            pure $ MethodInv $ PrimaryMethodCall e1' [] "addAll" [fromString i]
+          Id (TMap _ _) i ->
+            pure $ MethodInv $ PrimaryMethodCall e1' [] "putAll" [fromString i]
+            
           _ -> error "union: impossible"
 
       Syntax.DIFFERENCE ->
@@ -479,15 +500,38 @@ translateExp = para \case
                  _ ->
                    pure $ MethodInv $ PrimaryMethodCall e1' [] (Ident "removeAll") [e2']
 
-          _ -> error "difference: impossible"
+          Id (TSet _) i ->
+            pure $ MethodInv $ PrimaryMethodCall e1' [] "removeAll" [fromString i]
+          Id (TMap _ _) i ->
+            pure $ MethodInv $ PrimaryMethodCall (MethodInv $ PrimaryMethodCall e1' [] "keySet" []) [] "removeAll" [fromString i]
 
-  SetOrMapF t (unzip -> (_, ss)) -> case translateType t of
-    PrimType _ -> error "PrimType (Non-RefType) Set"
-    RefType t' -> case ss of
-      [] -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t'])]) [] Nothing
+          x -> error $ "difference: impossible " <> show x
+
+  SetOrMapF t (unzip -> (_, ss)) ->
+    case ss of
+      [] -> 
+        case t of
+          TSet t' -> case translateType t' of
+                       PrimType IntT -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType integerType])]) [] Nothing
+                       PrimType _ -> error "primtype"
+                       RefType t'' -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t''])]) [] Nothing
+          TMap t1 t2 -> case (translateType t1, translateType t2) of
+                          (PrimType IntT, PrimType IntT) -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType integerType, ActualType integerType])]) [] Nothing
+                          (PrimType IntT, RefType t2') -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType integerType, ActualType t2'])]) [] Nothing
+                          (RefType t1', PrimType IntT) -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType t1', ActualType integerType])]) [] Nothing
+                          (RefType t1', RefType t2') -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType t1', ActualType t2'])]) [] Nothing
+                          _ -> error "hashmap primtype err"
+          _ -> error "ops"
       _ -> do
         ss' <- sequence ss
-        pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t'])]) [MethodInv $ TypeMethodCall (Name [Ident "Arrays"]) [] (Ident "asList") ss'] Nothing
+        case t of
+          TSet t' -> case translateType t' of
+                       PrimType IntT -> error "todo:"
+                       PrimType _ -> error "primtype"
+                       RefType t'' -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType t''])]) [MethodInv $ TypeMethodCall (Name [Ident "Arrays"]) [] (Ident "asList") ss'] Nothing
+          TMap t1 t2 -> pure "Todo: Map literal with mutliple itmes"
+
+          _ -> error "ops"
   SizeOfF (_, e) -> do
     e' <- e
     pure $ MethodInv $ PrimaryMethodCall e' [] (Ident "size") []
@@ -514,12 +558,20 @@ translateIdentifier i = asks fst >>= pure . trId'
                       Init -> ExpName $ Name [Ident i]
                       Procedure -> ExpName $ Name [Ident i]
                       UponTimer -> MethodInv $ PrimaryMethodCall (ExpName "timer") [] (Ident $ "get" <> upperFirst i) []
-                      ForeachName -> ExpName "i"
+                      ForeachName -> ExpName (fromString i)
                       ForeachKey -> MethodInv $ PrimaryMethodCall (ExpName "entry") [] "getKey" []
                       ForeachValue -> MethodInv $ PrimaryMethodCall (ExpName "entry") [] "getValue" []
 
 translateType :: AType -> Type
 translateType = cata \case
+  TTupleF t1 t2 -> 
+    case (t1, t2) of
+      (RefType t1', RefType t2') -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType t1', ActualType t2'])]
+      (PrimType IntT, RefType t2') -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType integerType, ActualType t2'])]
+      (RefType t1', PrimType IntT) -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType t1', ActualType integerType])]
+      (PrimType IntT, PrimType IntT) -> RefType $ ClassRefType $ ClassType [(Ident $ "Map.Entry", [ActualType integerType, ActualType integerType])]
+      (PrimType x', _) -> error $ show x' <> " is not a boxed/Object type | TTupple fst"
+      (_, PrimType y') -> error $ show y' <> " is not a boxed/Object type | TTuple snd"
   TVoidF -> error "void type"
   TNullF -> RefType $ ClassRefType $ ClassType []
   TIntF -> PrimType IntT
@@ -529,22 +581,25 @@ translateType = cata \case
   TStringF -> stringType
   TSetF x -> case x of
     PrimType x' -> case x' of
-                     IntT -> RefType $ ClassRefType $ ClassType [(Ident "Integer", [])]
+                     IntT -> RefType integerType
                      _ -> error $ show x' <> " is not a boxed/Object type"
     RefType t  -> RefType $ ClassRefType $ ClassType [(Ident "Set", [ActualType t])]
   TMapF x y -> case (x, y) of
     (RefType t1, RefType t2) -> RefType $ ClassRefType $ ClassType [(Ident "Map", [ActualType t1, ActualType t2])]
     (PrimType x', _) -> case x' of
                           -- make intT -> Integer
-                          IntT -> RefType $ ClassRefType $ ClassType [(Ident "Integer", [])]
+                          IntT -> RefType integerType
                           _ -> error $ show x' <> " is not a boxed/Object type"
     (_, PrimType y') -> case y' of
-                          IntT -> RefType $ ClassRefType $ ClassType [(Ident "Integer", [])]
+                          IntT -> RefType integerType
                           _ -> error $ show y' <> " is not a boxed/Object type"
 
   TFunF _ _ -> error "Fun type"
   TClassF n -> RefType $ ClassRefType $ ClassType [(Ident n, [])]
   TVarF i -> RefType $ ClassRefType $ ClassType [(Ident $ "Unknown" <> show i, [])]
+
+integerType :: RefType
+integerType = ClassRefType $ ClassType [(Ident "Integer", [])]
 
 classRefType :: Identifier -> Type
 classRefType i = RefType $ ClassRefType $ ClassType [(Ident i, [])]
