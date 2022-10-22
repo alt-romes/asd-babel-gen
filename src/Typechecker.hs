@@ -461,7 +461,7 @@ instance Substitutable (TopDecl Typed) where
 instance Substitutable (Statement Typed) where
   applySubst s = cata \case
     CancelTimerF flc -> CancelTimer (applySubst s flc)
-    AssignF t i e -> Assign (applySubst s t) i (applySubst s e)
+    AssignF t i e -> Assign (applySubst s t) (applySubst s i) (applySubst s e)
     IfF e thenS elseS -> If (applySubst s e) thenS elseS
     TriggerSendF i e -> TriggerSend i (applySubst s e)
     TriggerF flc -> Trigger $ applySubst s flc
@@ -483,6 +483,14 @@ instance Substitutable (Statement Typed) where
     WhileF e stmts -> ftv e <> mconcat stmts
     ExprStatementF x -> ftv x
     ReturnEF e -> ftv e
+
+instance Substitutable (ALhs Typed) where
+  applySubst s = \case
+    IdA i -> IdA i
+    MapA i e -> MapA i (applySubst s e)
+  ftv = \case
+    IdA _ -> mempty
+    MapA _ e -> ftv e
 
 instance Substitutable (FLCall Typed) where
   applySubst s (FLCall name args) = FLCall name $ applySubst s args

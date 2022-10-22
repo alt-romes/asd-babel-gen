@@ -84,7 +84,7 @@ pDo :: Parser ()
 pDo = () <$ optional (symbol' "do") <* optional (symbol ":")
 
 pStatement :: Parser (Statement Parsed)
-pStatement = choice
+pStatement = (choice
   [ pIf
   , pForeach
   , pWhile
@@ -94,9 +94,10 @@ pStatement = choice
   , try (symbol' "trigger" *> symbol' "send") $> uncurry TriggerSend <*> parens ((,) <$> identifier <* symbol "," <*> argsExp)
   , symbol' "trigger" $> Trigger <*> pFLCall
   , symbol' "return" $> ReturnE <*> pExp
-  , try $ Assign () <$> pLhs <* symbol "<-" <*> pExp
+  , try $ Assign () <$> pLhs <* (symbol "<-" <|> symbol "←") <*> pExp
   , ExprStatement <$> pExp
-  ]
+  ]) <* optional (symbol ";")
+
   where
     pLhs :: Parser (ALhs Parsed)
     pLhs = do
@@ -137,14 +138,14 @@ pExp = makeExprParser
           , Bottom <$  (symbol "⊥" <|> symbol' "null")
           , SetOrMap () <$> (symbol' "{" *> (many pExp <* optional (symbol ",")) <* symbol' "}")
           , uncurry Tuple <$> parens ((,) <$> pExp <* symbol "," <*> pExp)
-          , Call () <$> (symbol' "call" *> pFLCall)
+          , try $ Call () <$> (optional (symbol' "call") *> pFLCall)
           , try $ MapAccess () <$> identifier <*> between (symbol "[") (symbol "]") pExp
           , symbol "!" $> NotE <*> pExp
           , Id () <$> identifier
           ])
   [ [ Prefix (SizeOf <$ symbol "#")
     ]
-  , [ binary "U" (BOp Syntax.UNION)
+  , [ InfixL (BOp Syntax.UNION <$ (symbol "U" <|> symbol "∪"))
     , binary "\\" (BOp Syntax.DIFFERENCE)
     ]
   , [ InfixL (BOp Syntax.IN <$ (symbol "∈" <|> symbol' "in"))
@@ -184,6 +185,7 @@ atype :: Parser AType
 atype = makeExprParser
           (choice
             [ TByte <$ symbol "byte"
+            , TInt <$ symbol "int"
             , TClass <$> identifier
             ])
           [[Postfix $ TArray <$ symbol "[" <* symbol "]"]]

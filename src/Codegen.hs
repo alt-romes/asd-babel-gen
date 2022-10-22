@@ -513,7 +513,7 @@ translateExp = para \case
 
           x -> error $ "difference: impossible " <> show x
 
-  SetOrMapF t (unzip -> (_, ss)) ->
+  SetOrMapF t (unzip -> (orgss, ss)) ->
     case ss of
       [] -> 
         case t of
@@ -522,10 +522,14 @@ translateExp = para \case
           TVar _ -> error "empty set or map type not specific enough"
           x -> error $ "ops"
       _ -> do
-        ss' <- sequence ss
         case t of
-          TSet t' -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType $ getRefTypeFrom $ translateType t'])]) [MethodInv $ TypeMethodCall (Name [Ident "Arrays"]) [] (Ident "asList") ss'] Nothing
-          TMap t1 t2 -> pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType $ getRefTypeFrom $ translateType t1, ActualType $ getRefTypeFrom $ translateType t2])]) ["TODO FROM MANY MAP"] Nothing
+          TSet t' -> do
+            ss' <- sequence ss
+            pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashSet", [ActualType $ getRefTypeFrom $ translateType t'])]) [MethodInv $ TypeMethodCall (Name [Ident "Arrays"]) [] (Ident "asList") ss'] Nothing
+          TMap t1 t2 -> do
+            ss' <- concat <$> mapM (\(Tuple a b) -> sequence [translateExp a, translateExp b]) orgss
+            pure $ InstanceCreation [] (TypeDeclSpecifier $ ClassType [(Ident "HashMap", [ActualType $ getRefTypeFrom $ translateType t1, ActualType $ getRefTypeFrom $ translateType t2])])
+                                 [MethodInv $ TypeMethodCall (Name [Ident "HashMap"]) [] (Ident "of") ss'] Nothing
 
           _ -> error "ops"
   SizeOfF (_, e) -> do
