@@ -49,7 +49,7 @@ upon timer SimplePeriodicTimer(arg1) do:
 
 A Flood Broadcast protocol:
 
-$WORKSPACE/protocols/FloodBroadcast
+protocols/FloodBroadcast
 ```c
 Interface:
   Requests:
@@ -93,7 +93,7 @@ Upon neighbourDown(downNeighbours) do:
 
 and another file in the same directory
 
-$WORKSPACE/protocols/overlay
+protocols/overlay
 ```c
 Interface:
     Indications:
@@ -105,7 +105,7 @@ State:
 // Nothing else, we want to implement this one by hand besides teh indications
 ```
 
-We'd get the generated babel code in a `target/` directory:
+Upon running `cabal run asd protocols` we'd get the generated babel code in a `target/` directory:
 
 ```
 $ tree target/
